@@ -30,6 +30,14 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │       └── rhdh/
 │           ├── kustomization.yaml  # RHDH overlay (namespace, secrets, patches)
 │           └── .env                # GITHUB_CLIENT_ID, SECRET, PAT (gitignored)
+├── templates/                      # RHDH software templates
+│   └── hello-world/
+│       ├── template.yaml           # Template definition (scaffolder)
+│       └── skeleton/               # Skeleton files for new projects
+│           ├── index.js
+│           ├── package.json
+│           ├── Dockerfile
+│           └── catalog-info.yaml
 ├── deploy.sh                       # DevWorkspace deploy script
 ├── deploy-rhdh.sh                  # RHDH deploy script
 ├── undeploy.sh                     # DevWorkspace cleanup script
@@ -201,6 +209,38 @@ helm template rhdh openshift-helm-charts/redhat-developer-hub \
 - **NetworkPolicy is required** — zero-trust networking on this cluster means both ingress to RHDH and RHDH→PostgreSQL traffic must be explicitly allowed. The `network-policy.yaml` handles both.
 - **GitHub auth uses `usernameMatchingUserEntityName`** — this acts as an allowlist. Only GitHub users with a matching `User` entity in `base/rhdh/users.yaml` can sign in. The `metadata.name` must match the GitHub username exactly (case-sensitive).
 - **Credentials are in `.env`, not the manifests** — `overlays/prod/rhdh/.env` is gitignored and contains `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_INTEGRATION_TOKEN`. Kustomize `secretGenerator` creates a Secret from it and the overlay patches `envFrom` onto the Deployment.
+
+## Software Templates
+
+RHDH uses Backstage software templates to scaffold new projects. Templates are registered in the catalog via `url` type locations pointing to `template.yaml` files in this repo.
+
+### Available Templates
+
+| Template | Description |
+|---|---|
+| `hello-world` | Simple Node.js Express service with a Dockerfile ready for OpenShift |
+
+### How it works
+
+1. The `template.yaml` defines the scaffolder wizard (input parameters, steps, outputs)
+2. The `skeleton/` directory contains the templated files that get scaffolded into a new repo
+3. The scaffolder uses the `GITHUB_INTEGRATION_TOKEN` to create the new repo on GitHub
+4. A `catalog-info.yaml` is included so the new component auto-registers in the RHDH catalog
+
+### Adding a new template
+
+1. Create a new directory under `templates/<template-name>/`
+2. Add a `template.yaml` and a `skeleton/` directory with your scaffolded files
+3. Register the template in the catalog config inside `base/rhdh/rhdh-manifests.yaml` under `catalog.locations`:
+   ```yaml
+   - type: url
+     target: https://github.com/alex-struk/ai-technical-solutions-agentic-sdlc/blob/main/templates/<template-name>/template.yaml
+     rules:
+       - allow: [Template]
+   ```
+4. Redeploy with `./deploy-rhdh.sh`
+
+> **Note:** In the future, templates should be moved to a dedicated repository (e.g., `software-templates`) to separate infrastructure configuration from template definitions. This is the standard Backstage pattern and allows templates to be versioned and managed independently.
 
 ## Adding new environments
 
