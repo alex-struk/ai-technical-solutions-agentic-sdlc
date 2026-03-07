@@ -1,0 +1,617 @@
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhdh-postgresql
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+type: Opaque
+data:
+  postgres-password: "dFBWZUxXV0VCZg=="
+  password: "bTBYM0trendaYw=="
+  # We don't auto-generate LDAP password when it's not provided as we do for other passwords
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhdh-postgresql-svcbind-postgres
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+type: servicebinding.io/postgresql
+data:
+  provider: "Yml0bmFtaQ=="
+  type: "cG9zdGdyZXNxbA=="
+  host: "cmhkaC1wb3N0Z3Jlc3Fs"
+  port: "NTQzMg=="
+  username: "cG9zdGdyZXM="
+  database: "cG9zdGdyZXM="
+  password: "dFBWZUxXV0VCZg=="
+  uri: "cG9zdGdyZXNxbDovL3Bvc3RncmVzOnRQVmVMV1dFQmZAcmhkaC1wb3N0Z3Jlc3FsOjU0MzIvcG9zdGdyZXM="
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhdh-postgresql-svcbind-custom-user
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+type: servicebinding.io/postgresql
+data:
+  provider: "Yml0bmFtaQ=="
+  type: "cG9zdGdyZXNxbA=="
+  host: "cmhkaC1wb3N0Z3Jlc3Fs"
+  port: "NTQzMg=="
+  username: "Ym5fYmFja3N0YWdl"
+  password: "bTBYM0trendaYw=="
+  uri: "cG9zdGdyZXNxbDovL2JuX2JhY2tzdGFnZTptMFgzS2t6d1pjQHJoZGgtcG9zdGdyZXNxbDo1NDMyLw=="
+---
+# Source: redhat-developer-hub/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhdh-auth
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/name: developer-hub
+    helm.sh/chart: redhat-developer-hub-1.9.0
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.9.0"
+    app.kubernetes.io/component: backstage
+  annotations:
+type: Opaque
+data:
+  backend-secret: "cTJ2Z1BtZFMzZjJaTURhUEJqVjBWeUsw"
+---
+# Source: redhat-developer-hub/charts/upstream/templates/app-config-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhdh-developer-hub-app-config
+  namespace: "fd34fb-prod"
+data:
+  app-config.yaml: |
+    app:
+      baseUrl: https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca
+    auth:
+      providers: {}
+    backend:
+      auth:
+        externalAccess:
+        - options:
+            secret: ${BACKEND_SECRET}
+            subject: legacy-default-config
+          type: legacy
+      baseUrl: https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca
+      cors:
+        origin: https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca
+      database:
+        connection:
+          password: ${POSTGRESQL_ADMIN_PASSWORD}
+          user: postgres
+---
+# Source: redhat-developer-hub/templates/dynamic-plugins-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhdh-dynamic-plugins
+data:
+  dynamic-plugins.yaml: |
+    includes:
+    - dynamic-plugins.default.yaml
+    plugins: []
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/primary/svc-headless.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhdh-postgresql-hl
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+    app.kubernetes.io/component: primary
+  annotations:
+    # Use this annotation in addition to the actual publishNotReadyAddresses
+    # field below because the annotation will stop being respected soon but the
+    # field is broken in some versions of Kubernetes:
+    # https://github.com/kubernetes/kubernetes/issues/58662
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  # We want all pods in the StatefulSet to have their addresses published for
+  # the sake of the other Postgresql pods even before they're ready, since they
+  # have to be able to talk to each other in order to become ready.
+  publishNotReadyAddresses: true
+  ports:
+    - name: tcp-postgresql
+      port: 5432
+      targetPort: tcp-postgresql
+  selector:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: primary
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/primary/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhdh-postgresql
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+    app.kubernetes.io/component: primary
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: tcp-postgresql
+      port: 5432
+      targetPort: tcp-postgresql
+      nodePort: null
+  selector:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: primary
+---
+# Source: redhat-developer-hub/charts/upstream/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhdh-developer-hub
+  namespace: "fd34fb-prod" 
+  labels:
+    app.kubernetes.io/name: developer-hub
+    helm.sh/chart: upstream-2.6.3
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: backstage
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+    - name: http-backend
+      port: 7007
+      targetPort: backend
+      protocol: TCP
+      nodePort: null
+    - name: http-metrics
+      port: 9464
+      targetPort: 9464  
+  selector:
+    app.kubernetes.io/name: developer-hub
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/component: backstage
+---
+# Source: redhat-developer-hub/charts/upstream/templates/backstage-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rhdh-developer-hub
+  namespace: "fd34fb-prod"
+  labels: 
+    app.kubernetes.io/name: developer-hub
+    helm.sh/chart: upstream-2.6.3
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: backstage
+  annotations:
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: developer-hub
+      app.kubernetes.io/instance: rhdh
+      app.kubernetes.io/component: backstage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: developer-hub
+        helm.sh/chart: upstream-2.6.3
+        app.kubernetes.io/instance: rhdh
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: backstage
+      annotations:
+        checksum/app-config: ba7bad99fc3ac4823b0083087a2d26065d250c140597ddffa1d878bb935a37bc
+        checksum/dynamic-plugins: 'f1f9a92f14a31362d7eb30e67ac1458faf1c685765610f93a8967194d8bc1a5f'
+    spec:
+      serviceAccountName: default
+      volumes:
+        - ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 5Gi
+          name: dynamic-plugins-root
+        - configMap:
+            defaultMode: 420
+            name: 'rhdh-dynamic-plugins'
+            optional: true
+          name: dynamic-plugins
+        - name: dynamic-plugins-npmrc
+          secret:
+            defaultMode: 420
+            optional: true
+            secretName: 'rhdh-dynamic-plugins-npmrc'
+        - name: dynamic-plugins-registry-auth
+          secret:
+            defaultMode: 416
+            optional: true
+            secretName: 'rhdh-dynamic-plugins-registry-auth'
+        - emptyDir: {}
+          name: npmcacache
+        - emptyDir: {}
+          name: extensions-catalog
+        - emptyDir: {}
+          name: temp
+        - name: backstage-app-config
+          configMap:
+            name: rhdh-developer-hub-app-config
+      
+      initContainers:
+        - command:
+          - ./install-dynamic-plugins.sh
+          - /dynamic-plugins-root
+          env:
+          - name: NPM_CONFIG_USERCONFIG
+            value: /opt/app-root/src/.npmrc.dynamic-plugins
+          - name: MAX_ENTRY_SIZE
+            value: "30000000"
+          - name: CATALOG_INDEX_IMAGE
+            value: ''
+          - name: CATALOG_ENTITIES_EXTRACT_DIR
+            value: /extensions
+          image: 'registry.redhat.io/rhdh/rhdh-hub-rhel9@sha256:3beaf864dc723f22336e26c75f45edcaeeaebc54bb1f848c8c9d363b48ce4d6a'
+          imagePullPolicy: ""
+          name: install-dynamic-plugins
+          resources:
+            limits:
+              cpu: 1000m
+              ephemeral-storage: 5Gi
+              memory: 2.5Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+          - mountPath: /dynamic-plugins-root
+            name: dynamic-plugins-root
+          - mountPath: /opt/app-root/src/dynamic-plugins.yaml
+            name: dynamic-plugins
+            readOnly: true
+            subPath: dynamic-plugins.yaml
+          - mountPath: /opt/app-root/src/.npmrc.dynamic-plugins
+            name: dynamic-plugins-npmrc
+            readOnly: true
+            subPath: .npmrc
+          - mountPath: /opt/app-root/src/.config/containers
+            name: dynamic-plugins-registry-auth
+            readOnly: true
+          - mountPath: /opt/app-root/src/.npm/_cacache
+            name: npmcacache
+          - mountPath: /extensions
+            name: extensions-catalog
+          - mountPath: /tmp
+            name: temp
+          workingDir: /opt/app-root/src
+      containers:
+        - name: backstage-backend
+          image: registry.redhat.io/rhdh/rhdh-hub-rhel9@sha256:3beaf864dc723f22336e26c75f45edcaeeaebc54bb1f848c8c9d363b48ce4d6a
+          imagePullPolicy: ""
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          args:
+            - "--config"
+            - "dynamic-plugins-root/app-config.dynamic-plugins.yaml"
+            - "--config"
+            - "/opt/app-root/src/app-config-from-configmap.yaml"
+          resources:
+            limits:
+              cpu: 1000m
+              ephemeral-storage: 5Gi
+              memory: 2.5Gi
+            requests:
+              cpu: 250m
+              memory: 1Gi
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /.backstage/health/v1/readiness
+              port: backend
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 2
+            timeoutSeconds: 4
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /.backstage/health/v1/liveness
+              port: backend
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 4
+          startupProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /.backstage/health/v1/liveness
+              port: backend
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            successThreshold: 1
+            timeoutSeconds: 4
+          env:
+            - name: APP_CONFIG_backend_listen_port
+              value: "7007"
+            - name: POSTGRES_HOST
+              value: rhdh-postgresql
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: bn_backstage
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rhdh-postgresql
+                  key: password
+            - name: BACKEND_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: backend-secret
+                  name: 'rhdh-auth'
+            - name: POSTGRESQL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: postgres-password
+                  name: 'rhdh-postgresql'
+          ports:
+            - name: backend
+              containerPort: 7007
+              protocol: TCP
+          volumeMounts:
+            - name: backstage-app-config
+              mountPath: "/opt/app-root/src/app-config-from-configmap.yaml"
+              subPath: app-config.yaml
+            - mountPath: /opt/app-root/src/dynamic-plugins-root
+              name: dynamic-plugins-root
+            - mountPath: /extensions
+              name: extensions-catalog
+            - mountPath: /tmp
+              name: temp
+---
+# Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/primary/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rhdh-postgresql
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/version: 15.4.0
+    helm.sh/chart: postgresql-12.10.0
+    app.kubernetes.io/component: primary
+spec:
+  replicas: 1
+  serviceName: rhdh-postgresql-hl
+  updateStrategy:
+    rollingUpdate: {}
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: rhdh
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/component: primary
+  template:
+    metadata:
+      name: rhdh-postgresql
+      labels:
+        app.kubernetes.io/instance: rhdh
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: postgresql
+        app.kubernetes.io/version: 15.4.0
+        helm.sh/chart: postgresql-12.10.0
+        app.kubernetes.io/component: primary
+    spec:
+      serviceAccountName: default
+      
+      affinity:
+        podAffinity:
+          
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/instance: rhdh
+                    app.kubernetes.io/name: postgresql
+                    app.kubernetes.io/component: primary
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+        nodeAffinity:
+          
+      hostNetwork: false
+      hostIPC: false
+      containers:
+        - name: postgresql
+          image: registry.redhat.io/rhel9/postgresql-15@sha256:cba1417b7e8a5b55289aa951c48dc940c72ebea5380045f32cd8faba41937f9b
+          imagePullPolicy: "IfNotPresent"
+          env:
+            - name: BITNAMI_DEBUG
+              value: "false"
+            - name: POSTGRESQL_PORT_NUMBER
+              value: "5432"
+            - name: POSTGRESQL_VOLUME_DIR
+              value: "/var/lib/pgsql/data"
+            - name: PGDATA
+              value: "/var/lib/pgsql/data/userdata"
+            # Authentication (RHEL postgresql image uses POSTGRESQL_* env vars)
+            - name: POSTGRESQL_USER
+              value: "bn_backstage"
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rhdh-postgresql
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              value: "backstage"
+            # Replication
+            # Initdb
+            # Standby
+            # LDAP
+            - name: POSTGRESQL_ENABLE_LDAP
+              value: "no"
+            # TLS
+            - name: POSTGRESQL_ENABLE_TLS
+              value: "no"
+            # Audit
+            - name: POSTGRESQL_LOG_HOSTNAME
+              value: "false"
+            - name: POSTGRESQL_LOG_CONNECTIONS
+              value: "false"
+            - name: POSTGRESQL_LOG_DISCONNECTIONS
+              value: "false"
+            - name: POSTGRESQL_PGAUDIT_LOG_CATALOG
+              value: "off"
+            # Others
+            - name: POSTGRESQL_CLIENT_MIN_MESSAGES
+              value: "error"
+            - name: POSTGRESQL_SHARED_PRELOAD_LIBRARIES
+              value: "pgaudit"
+            - name: POSTGRESQL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: postgres-password
+                  name: 'rhdh-postgresql'
+          ports:
+            - name: tcp-postgresql
+              containerPort: 5432
+          livenessProbe:
+            failureThreshold: 6
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U "bn_backstage" -h 127.0.0.1 -p 5432
+          readinessProbe:
+            failureThreshold: 6
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - -e
+                - |
+                  exec pg_isready -U "bn_backstage" -h 127.0.0.1 -p 5432
+          resources:
+            limits:
+              cpu: 250m
+              ephemeral-storage: 20Mi
+              memory: 1024Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+            - name: data
+              mountPath: /var/lib/pgsql/data
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        resources:
+          requests:
+            storage: "1Gi"
+---
+# Source: redhat-developer-hub/templates/tests/test-secret.yaml
+# RHDHBUGS-1893: test-only option to inject a user-provided dynamic plugins npmrc secret.
+# Doing it this way because the secret name is dynamic and depends on the release name.
+---
+# Source: redhat-developer-hub/templates/route.yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rhdh-developer-hub
+  namespace: "fd34fb-prod"
+  labels:
+    app.kubernetes.io/name: developer-hub
+    helm.sh/chart: redhat-developer-hub-1.9.0
+    app.kubernetes.io/instance: rhdh
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "1.9.0"
+    app.kubernetes.io/component: backstage
+spec:
+  host: rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca
+  path: /
+  port:
+    targetPort: http-backend
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: rhdh-developer-hub
+    weight: 100
+  wildcardPolicy: None

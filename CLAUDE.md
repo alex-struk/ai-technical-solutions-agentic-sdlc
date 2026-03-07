@@ -1,9 +1,10 @@
 # BC GOV OPENSHIFT SPECIFICS
 
-- Read README.md to understand how project is being operated
-- You are working ONLY in `fd34fb-prod` project
+- Read README.md to understand how project is being operated. Keep track of installation instructions as well as gotchas for this project in this file.
+- You are working ONLY in `fd34fb-prod` and `b875cc-dev` projects. `fd34fb-prod` contains openshift dev space and Red Hat Developer Portal while `b875cc-dev` hosts OpenShift AI with self-hosted llm models.
+- Information about `b875cc-dev` project is available in `b875cc-dev-assessment.md` file in root
+- Do NOT run `oc project ...` to switch project, instead use `-n` flag for every command
 - Use `oc` commands to interact with openshift
-- Keep track of installation instructions as well as gotchas for this project in README.md
 - Do not make adhoc direct modifications to remote infrastructure, changes must happen locally first and then deployed to openshift
 
 ## Storage

@@ -1,31 +1,41 @@
-# DevWorkspace (VS Code in Browser) on OpenShift
+# Agentic SDLC on OpenShift
 
-A browser-based VS Code IDE running on OpenShift using the DevWorkspace operator and che-code, managed with Kustomize.
+Developer tooling on OpenShift, managed with Kustomize. Includes:
+- **DevWorkspace** — browser-based VS Code IDE (che-code)
+- **Red Hat Developer Hub** — Backstage-based internal developer portal (RHDH v1.9.0)
 
 ## Prerequisites
 
 - `oc` CLI authenticated to the OpenShift cluster
+- `helm` CLI (for re-templating RHDH chart updates)
 - DevWorkspace operator installed on the cluster (check with `oc api-resources | grep devworkspace`)
 - A namespace with `allow-from-openshift-ingress` NetworkPolicy
 
 ## Project Structure
 
 ```
-├── base/                        # Base resources (environment-agnostic)
+├── base/
 │   ├── kustomization.yaml
-│   ├── workspace.yaml           # DevWorkspace definition
-│   └── workspace-route.yaml     # Route to expose the IDE
+│   ├── workspace.yaml              # DevWorkspace definition
+│   ├── workspace-route.yaml        # Route to expose the IDE
+│   └── rhdh/                       # Red Hat Developer Hub
+│       ├── kustomization.yaml
+│       ├── rhdh-manifests.yaml     # Helm-templated RHDH manifests
+│       └── network-policy.yaml     # Ingress + RHDH→PostgreSQL policies
 ├── overlays/
-│   └── prod/                    # Production overlay
-│       ├── kustomization.yaml   # Namespace, token injection, service name
-│       └── .env                 # CONNECTION_TOKEN and SERVICE_NAME (gitignored)
-├── deploy.sh                    # Two-phase deploy script
-├── undeploy.sh                  # Full cleanup script
+│   └── prod/
+│       ├── kustomization.yaml      # DevWorkspace overlay (namespace, token, service name)
+│       ├── .env                    # CONNECTION_TOKEN and SERVICE_NAME (gitignored)
+│       └── rhdh/
+│           └── kustomization.yaml  # RHDH overlay (namespace)
+├── deploy.sh                       # DevWorkspace deploy script
+├── deploy-rhdh.sh                  # RHDH deploy script
+├── undeploy.sh                     # DevWorkspace cleanup script
 ├── .gitignore
 └── CLAUDE.md
 ```
 
-## Setup
+## DevWorkspace Setup
 
 ### 1. Generate a connection token
 
@@ -83,6 +93,60 @@ sed -i "s/^SERVICE_NAME=.*/SERVICE_NAME=${DW_ID}-service/" overlays/prod/.env
 oc apply -k overlays/prod/
 ```
 
+## Red Hat Developer Hub (RHDH)
+
+RHDH is deployed using Helm-templated manifests managed via Kustomize, keeping it consistent with the rest of the project.
+
+### Deploy
+
+```bash
+./deploy-rhdh.sh
+```
+
+This applies the Kustomize overlay, waits for PostgreSQL and the Developer Hub to become ready, and prints the URL.
+
+**URL:** `https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca/`
+
+### How it was generated
+
+The manifests in `base/rhdh/rhdh-manifests.yaml` were generated with `helm template` (not `helm install`) to keep everything in git:
+
+```bash
+helm repo add openshift-helm-charts https://charts.openshift.io/
+helm template rhdh openshift-helm-charts/redhat-developer-hub \
+  --version 1.9.0 \
+  --namespace fd34fb-prod \
+  --set global.clusterRouterBase=apps.silver.devops.gov.bc.ca \
+  > base/rhdh/rhdh-manifests.yaml
+```
+
+After templating, the following manual edits were applied:
+- Removed the Helm test Pod (uses `latest` tag, blocked by ACS)
+- Cleared `CATALOG_INDEX_IMAGE` (skopeo inside the init container can't auth to `registry.redhat.io` without a pull secret mounted in the pod)
+- Fixed PostgreSQL env vars for RHEL image compatibility (Bitnami `POSTGRES_*` → RHEL `POSTGRESQL_*`)
+- App-config uses `postgres` superuser for DB connections (Backstage needs `CREATE DATABASE` privileges for per-plugin databases)
+
+### Upgrading RHDH
+
+To upgrade, re-run `helm template` with the new `--version`, re-apply the manual edits listed above, and redeploy:
+
+```bash
+helm template rhdh openshift-helm-charts/redhat-developer-hub \
+  --version <new-version> \
+  --namespace fd34fb-prod \
+  --set global.clusterRouterBase=apps.silver.devops.gov.bc.ca \
+  > base/rhdh/rhdh-manifests.yaml
+# Re-apply manual edits (see above), then:
+./deploy-rhdh.sh
+```
+
+### RHDH Gotchas
+
+- **RHEL PostgreSQL image uses different env vars than Bitnami** — the Helm chart templates Bitnami-style `POSTGRES_USER`/`POSTGRES_PASSWORD` but the actual image (`rhel9/postgresql-15`) requires `POSTGRESQL_USER`/`POSTGRESQL_PASSWORD`/`POSTGRESQL_DATABASE`. The manifests have been patched accordingly.
+- **Backstage needs superuser DB access** — each plugin creates its own database at startup. The `bn_backstage` user created by `POSTGRESQL_USER` doesn't have `CREATEDB` privileges, so the app-config connects as `postgres` with `POSTGRESQL_ADMIN_PASSWORD`.
+- **Plugin catalog index requires registry auth** — the init container uses `skopeo` to pull the plugin catalog index from `registry.redhat.io`. Without a pull secret mounted inside the pod, this fails. `CATALOG_INDEX_IMAGE` is set to empty to skip this step (node-level pull secrets only work for kubelet image pulls, not in-container skopeo).
+- **NetworkPolicy is required** — zero-trust networking on this cluster means both ingress to RHDH and RHDH→PostgreSQL traffic must be explicitly allowed. The `network-policy.yaml` handles both.
+
 ## Adding new environments
 
 Create a new overlay directory:
@@ -104,7 +168,7 @@ resources:
 
 Then deploy with `./deploy.sh overlays/dev` and undeploy with `./undeploy.sh overlays/dev`.
 
-## How it works
+## How DevWorkspace works
 
 The workspace runs two containers:
 
@@ -120,7 +184,7 @@ The startup script in the tooling container:
 
 Kustomize `replacements` inject the connection token from `overlays/prod/.env` into the workspace spec without needing `envsubst`.
 
-## Gotchas
+## DevWorkspace Gotchas
 
 - **No Eclipse Che / Dev Spaces on this cluster** — only the bare DevWorkspace Operator is installed. The che-code image expects a full Che stack (dashboard, plugin registry, telemetry). Several Che env vars are stubbed with empty values in the workspace spec to prevent extension crashes. These stubs are harmless.
 - **Terminal requires settings override** — without a full Che installation, che-code's custom terminal environment provider returns null, crashing `resolveWithEnvironment`. The startup script injects VS Code user settings that force a plain `/bin/bash` terminal profile, bypassing the Che provider entirely.
