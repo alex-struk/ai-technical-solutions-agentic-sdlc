@@ -2,7 +2,7 @@
 
 - You are working ONLY in `fd34fb-prod` project
 - Use `oc` commands to interact with openshift
-- Keep track of installation instructions for this project in README.md
+- Keep track of installation instructions as well as gotchas for this project in README.md
 - Do not make adhoc direct modifications to remote infrastructure, changes must happen locally first and then deployed to openshift
 
 ## Storage
