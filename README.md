@@ -21,13 +21,15 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │   └── rhdh/                       # Red Hat Developer Hub
 │       ├── kustomization.yaml
 │       ├── rhdh-manifests.yaml     # Helm-templated RHDH manifests
-│       └── network-policy.yaml     # Ingress + RHDH→PostgreSQL policies
+│       ├── network-policy.yaml     # Ingress + RHDH→PostgreSQL policies
+│       └── users.yaml              # Catalog user entities (login allowlist)
 ├── overlays/
 │   └── prod/
 │       ├── kustomization.yaml      # DevWorkspace overlay (namespace, token, service name)
 │       ├── .env                    # CONNECTION_TOKEN and SERVICE_NAME (gitignored)
 │       └── rhdh/
-│           └── kustomization.yaml  # RHDH overlay (namespace)
+│           ├── kustomization.yaml  # RHDH overlay (namespace, secrets, patches)
+│           └── .env                # GITHUB_CLIENT_ID, SECRET, PAT (gitignored)
 ├── deploy.sh                       # DevWorkspace deploy script
 ├── deploy-rhdh.sh                  # RHDH deploy script
 ├── undeploy.sh                     # DevWorkspace cleanup script
@@ -107,6 +109,55 @@ This applies the Kustomize overlay, waits for PostgreSQL and the Developer Hub t
 
 **URL:** `https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca/`
 
+### GitHub Authentication Setup
+
+RHDH uses GitHub OAuth for login and a Personal Access Token (PAT) for scaffolder repo creation.
+
+#### 1. Create a GitHub OAuth App
+
+Go to **GitHub > Settings > Developer settings > OAuth Apps > New OAuth App**:
+
+| Field | Value |
+|---|---|
+| Application name | `RHDH fd34fb-prod` |
+| Homepage URL | `https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca` |
+| Authorization callback URL | `https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca/api/auth/github/handler/frame` |
+
+Enable "Expire user authorization tokens" for short-lived token security.
+
+#### 2. Create a GitHub PAT
+
+Create a PAT at **GitHub > Settings > Developer settings > Personal access tokens** with `repo` scope. This is used by the scaffolder to create repos — it's separate from user login auth.
+
+#### 3. Configure credentials
+
+Add your credentials to `overlays/prod/rhdh/.env` (gitignored):
+
+```bash
+GITHUB_CLIENT_ID=<your-oauth-app-client-id>
+GITHUB_CLIENT_SECRET=<your-oauth-app-client-secret>
+GITHUB_INTEGRATION_TOKEN=<your-pat>
+```
+
+The overlay's `secretGenerator` creates a Kubernetes Secret from this file and injects it into the Deployment via `envFrom`.
+
+#### 4. Manage allowed users
+
+Only GitHub users with a matching `User` entity in the catalog can sign in (via `usernameMatchingUserEntityName` resolver). Edit `base/rhdh/users.yaml` to add or remove users:
+
+```yaml
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: github-username  # must match GitHub username exactly
+spec:
+  profile:
+    displayName: Display Name
+  memberOf: [team]
+```
+
+After editing, redeploy with `./deploy-rhdh.sh`.
+
 ### How it was generated
 
 The manifests in `base/rhdh/rhdh-manifests.yaml` were generated with `helm template` (not `helm install`) to keep everything in git:
@@ -125,6 +176,8 @@ After templating, the following manual edits were applied:
 - Cleared `CATALOG_INDEX_IMAGE` (skopeo inside the init container can't auth to `registry.redhat.io` without a pull secret mounted in the pod)
 - Fixed PostgreSQL env vars for RHEL image compatibility (Bitnami `POSTGRES_*` → RHEL `POSTGRESQL_*`)
 - App-config uses `postgres` superuser for DB connections (Backstage needs `CREATE DATABASE` privileges for per-plugin databases)
+- Added GitHub auth provider, integrations, `signInPage`, and catalog config to the app-config ConfigMap
+- Added `catalog-entities` volume mount for the users allowlist ConfigMap
 
 ### Upgrading RHDH
 
@@ -146,6 +199,8 @@ helm template rhdh openshift-helm-charts/redhat-developer-hub \
 - **Backstage needs superuser DB access** — each plugin creates its own database at startup. The `bn_backstage` user created by `POSTGRESQL_USER` doesn't have `CREATEDB` privileges, so the app-config connects as `postgres` with `POSTGRESQL_ADMIN_PASSWORD`.
 - **Plugin catalog index requires registry auth** — the init container uses `skopeo` to pull the plugin catalog index from `registry.redhat.io`. Without a pull secret mounted inside the pod, this fails. `CATALOG_INDEX_IMAGE` is set to empty to skip this step (node-level pull secrets only work for kubelet image pulls, not in-container skopeo).
 - **NetworkPolicy is required** — zero-trust networking on this cluster means both ingress to RHDH and RHDH→PostgreSQL traffic must be explicitly allowed. The `network-policy.yaml` handles both.
+- **GitHub auth uses `usernameMatchingUserEntityName`** — this acts as an allowlist. Only GitHub users with a matching `User` entity in `base/rhdh/users.yaml` can sign in. The `metadata.name` must match the GitHub username exactly (case-sensitive).
+- **Credentials are in `.env`, not the manifests** — `overlays/prod/rhdh/.env` is gitignored and contains `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_INTEGRATION_TOKEN`. Kustomize `secretGenerator` creates a Secret from it and the overlay patches `envFrom` onto the Deployment.
 
 ## Adding new environments
 
@@ -195,4 +250,5 @@ Kustomize `replacements` inject the connection token from `overlays/prod/.env` i
 - **The operator-managed route breaks VS Code** — it uses a `/che-code/` path prefix with a rewrite, but VS Code redirects to `/` which falls outside that path. The custom route solves this.
 - **The DevWorkspace operator does not support `valueFrom` in env vars** — the devfile v2 `env` schema only has `name` and `value`. The token is injected via Kustomize `replacements` from a ConfigMap generated from the `.env` file.
 - **Storage is ephemeral** — all data is lost when the pod restarts. To persist data, remove the `controller.devfile.io/storage-type: ephemeral` attribute and add a PVC-backed volume.
+- **Idle timeout is currently disabled** (`-1`) — the workspace will never auto-stop. This should be changed to a reasonable value (e.g., `8h`) once RHDH is fully working, to avoid wasting cluster resources.
 - **The route service name changes on every redeploy** — the DevWorkspace ID (and thus service name) changes each time. The deploy script handles this automatically.

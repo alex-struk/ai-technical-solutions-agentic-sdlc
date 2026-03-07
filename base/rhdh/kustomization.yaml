@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
   - rhdh-manifests.yaml
   - network-policy.yaml
+configMapGenerator:
+  - name: rhdh-catalog-entities
+    files:
+      - users.yaml
+    options:
+      disableNameSuffixHash: true

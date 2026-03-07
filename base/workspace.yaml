@@ -7,6 +7,7 @@ spec:
   template:
     attributes:
       controller.devfile.io/storage-type: ephemeral
+      controller.devfile.io/devworkspace-idle-timeout: "-1"
     projects:
       - name: my-project
         git:

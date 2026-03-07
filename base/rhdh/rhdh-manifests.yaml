@@ -90,8 +90,27 @@ data:
   app-config.yaml: |
     app:
       baseUrl: https://rhdh-developer-hub-fd34fb-prod.apps.silver.devops.gov.bc.ca
+    signInPage: github
     auth:
-      providers: {}
+      environment: production
+      providers:
+        github:
+          production:
+            clientId: ${GITHUB_CLIENT_ID}
+            clientSecret: ${GITHUB_CLIENT_SECRET}
+            signIn:
+              resolvers:
+                - resolver: usernameMatchingUserEntityName
+    integrations:
+      github:
+        - host: github.com
+          token: ${GITHUB_INTEGRATION_TOKEN}
+    catalog:
+      rules:
+        - allow: [User, Group, Component, System, API, Resource, Location, Template]
+      locations:
+        - type: file
+          target: /opt/app-root/src/catalog/users.yaml
     backend:
       auth:
         externalAccess:
@@ -276,7 +295,10 @@ spec:
         - name: backstage-app-config
           configMap:
             name: rhdh-developer-hub-app-config
-      
+        - name: catalog-entities
+          configMap:
+            name: rhdh-catalog-entities
+
       initContainers:
         - command:
           - ./install-dynamic-plugins.sh
@@ -423,6 +445,8 @@ spec:
               name: extensions-catalog
             - mountPath: /tmp
               name: temp
+            - name: catalog-entities
+              mountPath: /opt/app-root/src/catalog
 ---
 # Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/primary/statefulset.yaml
 apiVersion: apps/v1
