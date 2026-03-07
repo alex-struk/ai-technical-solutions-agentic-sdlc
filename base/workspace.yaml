@@ -26,6 +26,20 @@ spec:
               value: "0.0.0.0"
             - name: CONNECTION_TOKEN
               value: REPLACE_CONNECTION_TOKEN
+            - name: CHE_MACHINE_NAME
+              value: tooling
+            - name: DEVWORKSPACE_COMPONENT_NAME
+              value: tooling
+            - name: SHELL
+              value: /bin/bash
+            - name: CHE_PLUGIN_REGISTRY_URL
+              value: ""
+            - name: CHE_PLUGIN_REGISTRY_INTERNAL_URL
+              value: ""
+            - name: CHE_DASHBOARD_URL
+              value: ""
+            - name: DEVWORKSPACE_TELEMETRY_BACKEND_PORT
+              value: ""
           command: ["/bin/sh"]
           args:
             - "-c"
@@ -37,6 +51,40 @@ spec:
                   echo "${USER_NAME:-user}:x:$(id -u):" >> /etc/group
                 fi
               fi
+              export DEVWORKSPACE_POD_NAME=$(hostname)
+              mkdir -p /home/user/.kube
+              cat > /home/user/.kube/config <<KUBEEOF
+              apiVersion: v1
+              kind: Config
+              clusters:
+              - cluster:
+                  server: https://kubernetes.default.svc
+                  certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                name: in-cluster
+              contexts:
+              - context:
+                  cluster: in-cluster
+                  namespace: ${DEVWORKSPACE_NAMESPACE:-fd34fb-prod}
+                name: in-cluster
+              current-context: in-cluster
+              users:
+              - name: in-cluster
+                user:
+                  tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+              KUBEEOF
+              mkdir -p /checode/remote/data/User
+              cat > /checode/remote/data/User/settings.json <<'SETTINGSEOF'
+              {
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.profiles.linux": {
+                  "bash": {
+                    "path": "/bin/bash",
+                    "args": []
+                  }
+                },
+                "terminal.integrated.env.linux": {}
+              }
+              SETTINGSEOF
               export MACHINE_EXEC_PORT=3333
               nohup /checode/bin/machine-exec --url "127.0.0.1:${MACHINE_EXEC_PORT}" &
               export VSCODE_AGENT_FOLDER=/checode/remote
@@ -47,6 +95,7 @@ spec:
                 --host 0.0.0.0 \
                 --port 3100 \
                 --connection-token "$CONNECTION_TOKEN" \
+                --force-disable-user-env \
                 --default-folder /projects/my-project
           volumeMounts:
             - name: checode

@@ -1,5 +1,6 @@
 # BC GOV OPENSHIFT SPECIFICS
 
+- Read README.md to understand how project is being operated
 - You are working ONLY in `fd34fb-prod` project
 - Use `oc` commands to interact with openshift
 - Keep track of installation instructions as well as gotchas for this project in README.md
