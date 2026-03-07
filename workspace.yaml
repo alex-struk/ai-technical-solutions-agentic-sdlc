@@ -1,0 +1,81 @@
+kind: DevWorkspace
+apiVersion: workspace.devfile.io/v1alpha2
+metadata:
+  name: my-workspace
+  namespace: fd34fb-prod
+spec:
+  started: true
+  template:
+    attributes:
+      controller.devfile.io/storage-type: ephemeral
+    projects:
+      - name: my-project
+        git:
+          remotes:
+            origin: "https://github.com/bcgov/ai-adoption-document-intelligence"
+    components:
+      - name: tooling
+        container:
+          image: quay.io/devfile/universal-developer-image@sha256:f4b3810b4a81afe9f17ca833d27c96053c2c87d668ab9ee9a4b36ffa3ee6df40
+          memoryLimit: 2Gi
+          memoryRequest: 256Mi
+          cpuRequest: 100m
+          cpuLimit: 500m
+          mountSources: true
+          env:
+            - name: CODE_HOST
+              value: "0.0.0.0"
+            - name: CONNECTION_TOKEN
+              value: "${CONNECTION_TOKEN}"
+          command: ["/bin/sh"]
+          args:
+            - "-c"
+            - |
+              sleep 5
+              if ! whoami &> /dev/null; then
+                if [ -w /etc/passwd ]; then
+                  echo "${USER_NAME:-user}:x:$(id -u):0:${USER_NAME:-user} user:${HOME}:/bin/bash" >> /etc/passwd
+                  echo "${USER_NAME:-user}:x:$(id -u):" >> /etc/group
+                fi
+              fi
+              export MACHINE_EXEC_PORT=3333
+              nohup /checode/bin/machine-exec --url "127.0.0.1:${MACHINE_EXEC_PORT}" &
+              export VSCODE_AGENT_FOLDER=/checode/remote
+              cd /checode/checode-linux-libc/ubi8
+              export VSCODE_NODEJS_RUNTIME_DIR="$(pwd)"
+              export LD_LIBRARY_PATH="/checode/checode-linux-libc/ubi8/ld_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              exec "$VSCODE_NODEJS_RUNTIME_DIR/node" out/server-main.js \
+                --host 0.0.0.0 \
+                --port 3100 \
+                --connection-token "$CONNECTION_TOKEN" \
+                --default-workspace /projects/.code-workspace
+          volumeMounts:
+            - name: checode
+              path: /checode
+          endpoints:
+            - name: che-code
+              targetPort: 3100
+              exposure: public
+              secure: true
+              protocol: https
+              attributes:
+                type: main
+                cookiesAuthEnabled: false
+                discoverable: false
+                urlRewriteSupported: false
+      - name: che-code-injector
+        attributes:
+          controller.devfile.io/init-container: true
+        container:
+          image: quay.io/che-incubator/che-code@sha256:c4f28b391ca710e14d20fbfab038ca949b308ce8a57b4add9929720def04f907
+          command: ["/bin/sh"]
+          args: ["-c", "/entrypoint-init-container.sh && sleep infinity"]
+          volumeMounts:
+            - name: checode
+              path: /checode
+          memoryLimit: 256Mi
+          memoryRequest: 32Mi
+          cpuLimit: 500m
+          cpuRequest: 30m
+      - name: checode
+        volume: {}

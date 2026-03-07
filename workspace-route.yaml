@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: my-workspace-ide
+  namespace: fd34fb-prod
+spec:
+  host: my-workspace-ide.apps.silver.devops.gov.bc.ca
+  path: /
+  port:
+    targetPort: 3100
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: workspacec878d71bae4f4e82-service
+    weight: 100
