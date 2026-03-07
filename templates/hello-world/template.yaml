@@ -9,7 +9,7 @@ metadata:
     - express
     - openshift
 spec:
-  owner: user:default/guest
+  owner: group:default/team
   type: service
 
   parameters:
@@ -65,8 +65,6 @@ spec:
       name: Publish to GitHub
       action: publish:github
       input:
-        allowedHosts:
-          - github.com
         repoUrl: ${{ parameters.repoUrl }}
         repoVisibility: public
         description: ${{ parameters.description }}
