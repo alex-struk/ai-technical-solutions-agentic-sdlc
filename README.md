@@ -234,7 +234,7 @@ RHDH uses Backstage software templates to scaffold new projects. Templates are r
 3. Register the template in the catalog config inside `base/rhdh/rhdh-manifests.yaml` under `catalog.locations`:
    ```yaml
    - type: url
-     target: https://github.com/alex-struk/ai-technical-solutions-agentic-sdlc/blob/main/templates/<template-name>/template.yaml
+     target: https://github.com/alex-struk/ai-technical-solutions-agentic-sdlc/blob/master/templates/<template-name>/template.yaml
      rules:
        - allow: [Template]
    ```

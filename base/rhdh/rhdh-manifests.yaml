@@ -112,7 +112,7 @@ data:
         - type: file
           target: /opt/app-root/src/catalog/users.yaml
         - type: url
-          target: https://github.com/alex-struk/ai-technical-solutions-agentic-sdlc/blob/main/templates/hello-world/template.yaml
+          target: https://github.com/alex-struk/ai-technical-solutions-agentic-sdlc/blob/master/templates/hello-world/template.yaml
           rules:
             - allow: [Template]
     backend:
