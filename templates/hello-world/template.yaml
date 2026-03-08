@@ -77,6 +77,22 @@ spec:
         repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
         catalogInfoPath: /catalog-info.yaml
 
+    - id: devworkspace-repo
+      name: Register in DevWorkspace
+      action: kubernetes:apply
+      input:
+        namespaced: true
+        clusterName: local
+        manifest: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: repo-${{ parameters.component_id }}
+            labels:
+              devworkspace-repo: "true"
+          data:
+            url: ${{ steps['publish'].output.remoteUrl }}
+
   output:
     links:
       - title: Repository

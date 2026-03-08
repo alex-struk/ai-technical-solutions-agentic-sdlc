@@ -5,6 +5,10 @@ metadata:
   description: ${{values.description}}
   annotations:
     github.com/project-slug: ${{values.destination.owner + "/" + values.destination.repo}}
+  links:
+    - url: https://my-workspace-ide.apps.silver.devops.gov.bc.ca/?folder=/projects/${{values.destination.repo}}
+      title: Open in DevWorkspace
+      icon: cloud
 spec:
   type: service
   lifecycle: experimental

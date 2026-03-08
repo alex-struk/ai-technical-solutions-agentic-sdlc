@@ -8,11 +8,6 @@ spec:
     attributes:
       controller.devfile.io/storage-type: ephemeral
       controller.devfile.io/devworkspace-idle-timeout: "-1"
-    projects:
-      - name: my-project
-        git:
-          remotes:
-            origin: "https://github.com/bcgov/ai-adoption-document-intelligence"
     components:
       - name: tooling
         container:
@@ -86,6 +81,22 @@ spec:
                 "terminal.integrated.env.linux": {}
               }
               SETTINGSEOF
+              echo "Cloning repos from devworkspace-repo ConfigMaps..."
+              SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              REPO_URLS=$(curl -sf --cacert "$CA_CERT" -H "Authorization: Bearer $SA_TOKEN" \
+                "https://kubernetes.default.svc/api/v1/namespaces/$NS/configmaps?labelSelector=devworkspace-repo%3Dtrue" \
+                | grep -o '"url": *"[^"]*"' | sed 's/"url": *"\([^"]*\)"/\1/' || true)
+              mkdir -p /projects
+              for url in $REPO_URLS; do
+                repo_name=$(basename "$url" .git)
+                if [ ! -d "/projects/$repo_name" ]; then
+                  echo "Cloning $url -> /projects/$repo_name"
+                  git clone "$url" "/projects/$repo_name" || echo "WARN: Failed to clone $url"
+                fi
+              done
+              echo "Repo cloning complete."
               export MACHINE_EXEC_PORT=3333
               nohup /checode/bin/machine-exec --url "127.0.0.1:${MACHINE_EXEC_PORT}" &
               export VSCODE_AGENT_FOLDER=/checode/remote
@@ -97,7 +108,7 @@ spec:
                 --port 3100 \
                 --connection-token "$CONNECTION_TOKEN" \
                 --force-disable-user-env \
-                --default-folder /projects/my-project
+                --default-folder /projects
           volumeMounts:
             - name: checode
               path: /checode

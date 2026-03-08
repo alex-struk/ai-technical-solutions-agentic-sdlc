@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - workspace.yaml
   - workspace-route.yaml
+  - rbac-devworkspace-repos.yaml

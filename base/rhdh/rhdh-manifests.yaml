@@ -129,6 +129,14 @@ data:
         connection:
           password: ${POSTGRESQL_ADMIN_PASSWORD}
           user: postgres
+    kubernetes:
+      clusterLocatorMethods:
+        - type: config
+          clusters:
+            - url: https://kubernetes.default.svc
+              name: local
+              authProvider: serviceAccount
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 ---
 # Source: redhat-developer-hub/templates/dynamic-plugins-configmap.yaml
 apiVersion: v1
@@ -141,6 +149,8 @@ data:
     - dynamic-plugins.default.yaml
     plugins:
     - package: ./dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic
+      disabled: false
+    - package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-kubernetes-dynamic
       disabled: false
 ---
 # Source: redhat-developer-hub/charts/upstream/charts/postgresql/templates/primary/svc-headless.yaml
