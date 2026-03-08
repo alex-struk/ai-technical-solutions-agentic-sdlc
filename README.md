@@ -3,6 +3,7 @@
 Developer tooling on OpenShift, managed with Kustomize. Includes:
 - **DevWorkspace** — browser-based VS Code IDE (che-code)
 - **Red Hat Developer Hub** — Backstage-based internal developer portal (RHDH v1.9.0)
+- **KServe Model Serving** — LLM inference via llama.cpp on OpenShift AI (`b875cc-dev`)
 
 ## Prerequisites
 
@@ -18,11 +19,16 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │   ├── kustomization.yaml
 │   ├── workspace.yaml              # DevWorkspace definition
 │   ├── workspace-route.yaml        # Route to expose the IDE
-│   └── rhdh/                       # Red Hat Developer Hub
+│   ├── rhdh/                       # Red Hat Developer Hub
+│   │   ├── kustomization.yaml
+│   │   ├── rhdh-manifests.yaml     # Helm-templated RHDH manifests
+│   │   ├── network-policy.yaml     # Ingress + RHDH→PostgreSQL policies
+│   │   └── users.yaml              # Catalog user entities (login allowlist)
+│   └── kserve/                     # KServe model serving (b875cc-dev)
 │       ├── kustomization.yaml
-│       ├── rhdh-manifests.yaml     # Helm-templated RHDH manifests
-│       ├── network-policy.yaml     # Ingress + RHDH→PostgreSQL policies
-│       └── users.yaml              # Catalog user entities (login allowlist)
+│       ├── pvc.yaml                # PVC for GGUF model storage
+│       ├── serving-runtime.yaml    # llama.cpp ServingRuntime
+│       └── inference-service.yaml  # InferenceService for qwen2.5-3b
 ├── overlays/
 │   └── prod/
 │       ├── kustomization.yaml      # DevWorkspace overlay (namespace, token, service name)
@@ -30,6 +36,8 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │       └── rhdh/
 │           ├── kustomization.yaml  # RHDH overlay (namespace, secrets, patches)
 │           └── .env                # GITHUB_CLIENT_ID, SECRET, PAT (gitignored)
+│       └── kserve/
+│           └── kustomization.yaml  # KServe overlay (namespace: b875cc-dev)
 ├── templates/                      # RHDH software templates
 │   └── hello-world/
 │       ├── template.yaml           # Template definition (scaffolder)
@@ -40,6 +48,7 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │           └── catalog-info.yaml
 ├── deploy.sh                       # DevWorkspace deploy script
 ├── deploy-rhdh.sh                  # RHDH deploy script
+├── deploy-kserve.sh                # KServe model serving deploy script
 ├── undeploy.sh                     # DevWorkspace cleanup script
 ├── .gitignore
 └── CLAUDE.md
@@ -241,6 +250,60 @@ RHDH uses Backstage software templates to scaffold new projects. Templates are r
 4. Redeploy with `./deploy-rhdh.sh`
 
 > **Note:** In the future, templates should be moved to a dedicated repository (e.g., `software-templates`) to separate infrastructure configuration from template definitions. This is the standard Backstage pattern and allows templates to be versioned and managed independently.
+
+## KServe Model Serving (OpenShift AI)
+
+LLM models are served via KServe `InferenceService` with a llama.cpp `ServingRuntime`, deployed to the `b875cc-dev` namespace. Models are stored on a PVC (no S3 required).
+
+**Namespace**: `b875cc-dev` (OpenShift AI with KServe single-model serving)
+
+### Deploy
+
+```bash
+./deploy-kserve.sh
+```
+
+The script:
+1. Patches namespace labels for RHOAI dashboard visibility and KServe mode
+2. Applies kustomize manifests (PVC, ServingRuntime, InferenceService)
+3. Downloads the GGUF model from HuggingFace into the PVC via a temporary helper pod
+4. Waits for the InferenceService to become ready and prints the endpoint URL
+
+### Served Models
+
+| InferenceService | Model | Runtime | Resources |
+|---|---|---|---|
+| `qwen25-3b` | `qwen2.5-3b-instruct-q4_k_m.gguf` | `llamacpp-runtime` | 1 CPU / 6-8Gi mem |
+
+### Adding a new model
+
+1. Add a new `InferenceService` YAML in `base/kserve/` referencing the model file and runtime
+2. Add it to `base/kserve/kustomization.yaml`
+3. Update the `MODEL_NAME` and `MODEL_URL` in `deploy-kserve.sh` (or extend it to support multiple models)
+4. Run `./deploy-kserve.sh`
+
+### Testing
+
+```bash
+curl https://<inference-endpoint>/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ],
+    "max_tokens": 100
+  }'
+```
+
+### KServe Gotchas
+
+- **No Knative Serving on this cluster** — must use `RawDeployment` mode (annotation `serving.kserve.io/deploymentMode: RawDeployment`). Serverless auto-scale-to-zero is not available.
+- **Namespace labels are critical** — `opendatahub.io/dashboard=true` makes the project visible in RHOAI dashboard; `modelmesh-enabled=false` routes to KServe instead of ModelMesh. The deploy script sets these imperatively (not in kustomize) to avoid conflicting with the other team's ArgoCD.
+- **ACS blocks `latest` image tags** — the llama.cpp image is pinned by SHA digest, not by tag.
+- **PVC storage, not S3** — models are stored on a `netapp-file-standard` RWX PVC (`llm-models-pvc`). The helper pod downloads from HuggingFace on first deploy; subsequent deploys skip the download if the file already exists.
+- **Each model gets its own pod** — unlike the existing `llm-server` which runs 5 models in one pod, each `InferenceService` gets dedicated resources. This prevents OOM issues.
+- **The existing `llm-server` is unaffected** — it's a plain Kubernetes Deployment (not a KServe resource), so changing namespace labels and deploying InferenceServices has no impact on it.
 
 ## Adding new environments
 

@@ -1,0 +1,20 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen25-3b
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: any
+      runtime: llamacpp-runtime
+      storageUri: "pvc://llm-models-pvc/qwen2.5-3b-instruct-q4_k_m.gguf"
+      resources:
+        requests:
+          memory: 6Gi
+          cpu: "1"
+        limits:
+          memory: 8Gi
