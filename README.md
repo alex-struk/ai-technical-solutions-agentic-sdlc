@@ -50,6 +50,7 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 ├── deploy-rhdh.sh                  # RHDH deploy script
 ├── deploy-kserve.sh                # KServe model serving deploy script
 ├── undeploy.sh                     # DevWorkspace cleanup script
+├── undeploy-kserve.sh              # KServe cleanup script
 ├── .gitignore
 └── CLAUDE.md
 ```
@@ -264,10 +265,20 @@ LLM models are served via KServe `InferenceService` with a llama.cpp `ServingRun
 ```
 
 The script:
-1. Patches namespace labels for RHOAI dashboard visibility and KServe mode
+1. Patches namespace labels for RHOAI dashboard visibility and KServe mode (requires admin — warns if insufficient permissions)
 2. Applies kustomize manifests (PVC, ServingRuntime, InferenceService)
-3. Downloads the GGUF model from HuggingFace into the PVC via a temporary helper pod
+3. Loads the GGUF model into the PVC via a temporary helper pod:
+   - Skips if model already exists on PVC (verified by file size)
+   - Downloads from HuggingFace (~2Gi) on first deploy
 4. Waits for the InferenceService to become ready and prints the endpoint URL
+
+### Undeploy
+
+```bash
+./undeploy-kserve.sh
+```
+
+Removes the InferenceService, ServingRuntime, and PVC (including downloaded models). Namespace labels are not reverted automatically.
 
 ### Served Models
 
@@ -299,7 +310,7 @@ curl https://<inference-endpoint>/v1/chat/completions \
 ### KServe Gotchas
 
 - **No Knative Serving on this cluster** — must use `RawDeployment` mode (annotation `serving.kserve.io/deploymentMode: RawDeployment`). Serverless auto-scale-to-zero is not available.
-- **Namespace labels are critical** — `opendatahub.io/dashboard=true` makes the project visible in RHOAI dashboard; `modelmesh-enabled=false` routes to KServe instead of ModelMesh. The deploy script sets these imperatively (not in kustomize) to avoid conflicting with the other team's ArgoCD.
+- **Namespace labels are critical** — `opendatahub.io/dashboard=true` makes the project visible in RHOAI dashboard; `modelmesh-enabled=false` routes to KServe instead of ModelMesh. The deploy script attempts to set these but **requires admin privileges**. If you see a permissions error, ask a namespace admin to run: `oc label namespace b875cc-dev opendatahub.io/dashboard=true modelmesh-enabled=false --overwrite`
 - **ACS blocks `latest` image tags** — the llama.cpp image is pinned by SHA digest, not by tag.
 - **PVC storage, not S3** — models are stored on a `netapp-file-standard` RWX PVC (`llm-models-pvc`). The helper pod downloads from HuggingFace on first deploy; subsequent deploys skip the download if the file already exists.
 - **Each model gets its own pod** — unlike the existing `llm-server` which runs 5 models in one pod, each `InferenceService` gets dedicated resources. This prevents OOM issues.

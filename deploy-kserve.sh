@@ -9,9 +9,6 @@ PVC_NAME="llm-models-pvc"
 LOADER_POD="model-loader"
 ISVC_NAME="qwen25-3b"
 
-# Source notebook that already has models downloaded
-SOURCE_NOTEBOOK_POD="ai-dev-0"
-SOURCE_MODEL_PATH="/opt/app-root/src/Software/llama.cpp/${MODEL_NAME}"
 
 # ── Step 0: Patch namespace labels ─────────────────────────────────────────────
 echo "==> Patching namespace labels for RHOAI dashboard + KServe..."
@@ -75,22 +72,17 @@ EOF
 echo "==> Waiting for model-loader pod to be ready..."
 oc wait --for=condition=Ready "pod/${LOADER_POD}" -n "${NAMESPACE}" --timeout=120s
 
-# Check if model file already exists
-if oc exec "${LOADER_POD}" -n "${NAMESPACE}" -- test -f "/mnt/models/${MODEL_NAME}"; then
-  echo "==> Model ${MODEL_NAME} already exists on PVC, skipping."
+# Check if model file already exists (and is the expected size)
+EXPECTED_SIZE=2104932768  # qwen2.5-3b-instruct-q4_k_m.gguf
+ACTUAL_SIZE=$(oc exec "${LOADER_POD}" -n "${NAMESPACE}" -- stat -c%s "/mnt/models/${MODEL_NAME}" 2>/dev/null || echo 0)
+if [ "${ACTUAL_SIZE}" -eq "${EXPECTED_SIZE}" ]; then
+  echo "==> Model ${MODEL_NAME} already exists on PVC (size verified), skipping."
 else
-  # Try to copy from the notebook pod first (avoids re-downloading ~2Gi)
-  if oc exec "${SOURCE_NOTEBOOK_POD}" -n "${NAMESPACE}" -- test -f "${SOURCE_MODEL_PATH}" 2>/dev/null; then
-    echo "==> Copying ${MODEL_NAME} from notebook pod (faster than re-downloading)..."
-    oc exec "${SOURCE_NOTEBOOK_POD}" -n "${NAMESPACE}" -- cat "${SOURCE_MODEL_PATH}" \
-      | oc exec -i "${LOADER_POD}" -n "${NAMESPACE}" -- tee "/mnt/models/${MODEL_NAME}" > /dev/null
-    echo "==> Copy complete."
-  else
-    echo "==> Model not found on notebook pod, downloading from HuggingFace (~2Gi)..."
-    oc exec "${LOADER_POD}" -n "${NAMESPACE}" -- \
-      curl -L -o "/mnt/models/${MODEL_NAME}" "${MODEL_URL}"
-    echo "==> Download complete."
-  fi
+  [ "${ACTUAL_SIZE}" -gt 0 ] && echo "==> Existing file has wrong size (${ACTUAL_SIZE} vs ${EXPECTED_SIZE}), re-downloading..."
+  echo "==> Downloading ${MODEL_NAME} from HuggingFace (~2Gi)..."
+  oc exec "${LOADER_POD}" -n "${NAMESPACE}" -- \
+    curl -L -o "/mnt/models/${MODEL_NAME}" "${MODEL_URL}"
+  echo "==> Download complete."
 fi
 
 # Verify the file

@@ -1,0 +1,67 @@
+{% raw %}
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install oc CLI
+        uses: redhat-actions/openshift-tools-installer@v1
+        with:
+          oc: "4"
+
+      - name: Deploy to OpenShift
+        env:
+          OC_TOKEN: ${{ secrets.OC_TOKEN }}
+          OC_SERVER: https://api.silver.devops.gov.bc.ca:6443
+          OC_NAMESPACE: fd34fb-prod
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          oc login --token=${OC_TOKEN} --server=${OC_SERVER}
+          oc apply -f openshift/ -n ${OC_NAMESPACE}
+          oc set image deployment/{% endraw %}${{values.component_id}}{% raw %} \
+            {% endraw %}${{values.component_id}}{% raw %}=ghcr.io/${GITHUB_REPOSITORY}:${IMAGE_TAG} \
+            -n ${OC_NAMESPACE}
+          oc rollout status deployment/{% endraw %}${{values.component_id}}{% raw %} \
+            -n ${OC_NAMESPACE} --timeout=120s
+{% endraw %}

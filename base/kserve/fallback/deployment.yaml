@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen25-3b-llama
+  labels:
+    app: qwen25-3b-llama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen25-3b-llama
+  template:
+    metadata:
+      labels:
+        app: qwen25-3b-llama
+    spec:
+      containers:
+        - name: llama-server
+          image: quay.io/alexonoliveira/llamacpp_python@sha256:4c0043b34e2ac3bf5ecd583e571cbc9661c7abebca3c13c365b78441907def91
+          args:
+            - --model
+            - /mnt/models/qwen2.5-3b-instruct-q4_k_m.gguf
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+          env:
+            - name: LLAMA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llama-api-key
+                  key: LLAMA_API_KEY
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: 6Gi
+              cpu: "1"
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: models
+              mountPath: /mnt/models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen25-3b-llama
+  labels:
+    app: qwen25-3b-llama
+spec:
+  selector:
+    app: qwen25-3b-llama
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: qwen25-3b-llama
+  labels:
+    app: qwen25-3b-llama
+spec:
+  to:
+    kind: Service
+    name: qwen25-3b-llama
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

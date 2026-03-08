@@ -3,7 +3,7 @@ kind: Template
 metadata:
   name: hello-world-nodejs
   title: Hello World Node.js Service
-  description: Creates a simple Node.js Express hello world application with a Dockerfile ready for OpenShift
+  description: Creates a Node.js Express app with GitHub Actions CI/CD and OpenShift deployment manifests. Requires OC_TOKEN secret in the scaffolded repo.
   tags:
     - nodejs
     - express
@@ -97,6 +97,8 @@ spec:
     links:
       - title: Repository
         url: ${{ steps['publish'].output.remoteUrl }}
+      - title: GitHub Actions
+        url: ${{ steps['publish'].output.remoteUrl }}/actions
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}

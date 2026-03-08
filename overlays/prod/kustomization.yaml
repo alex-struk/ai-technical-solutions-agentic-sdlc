@@ -17,6 +17,36 @@ replacements:
   - source:
       kind: ConfigMap
       name: workspace-config
+      fieldPath: data.GITHUB_TOKEN
+    targets:
+      - select:
+          kind: DevWorkspace
+          name: my-workspace
+        fieldPaths:
+          - spec.template.components.[name=tooling].container.env.[name=GITHUB_TOKEN].value
+  - source:
+      kind: ConfigMap
+      name: workspace-config
+      fieldPath: data.GIT_USER_NAME
+    targets:
+      - select:
+          kind: DevWorkspace
+          name: my-workspace
+        fieldPaths:
+          - spec.template.components.[name=tooling].container.env.[name=GIT_USER_NAME].value
+  - source:
+      kind: ConfigMap
+      name: workspace-config
+      fieldPath: data.GIT_USER_EMAIL
+    targets:
+      - select:
+          kind: DevWorkspace
+          name: my-workspace
+        fieldPaths:
+          - spec.template.components.[name=tooling].container.env.[name=GIT_USER_EMAIL].value
+  - source:
+      kind: ConfigMap
+      name: workspace-config
       fieldPath: data.SERVICE_NAME
     targets:
       - select:

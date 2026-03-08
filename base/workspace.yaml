@@ -36,6 +36,12 @@ spec:
               value: ""
             - name: DEVWORKSPACE_TELEMETRY_BACKEND_PORT
               value: ""
+            - name: GITHUB_TOKEN
+              value: REPLACE_GITHUB_TOKEN
+            - name: GIT_USER_NAME
+              value: REPLACE_GIT_USER_NAME
+            - name: GIT_USER_EMAIL
+              value: REPLACE_GIT_USER_EMAIL
           command: ["/bin/sh"]
           args:
             - "-c"
@@ -81,6 +87,9 @@ spec:
                 "terminal.integrated.env.linux": {}
               }
               SETTINGSEOF
+              git config --global user.name "$GIT_USER_NAME"
+              git config --global user.email "$GIT_USER_EMAIL"
+              git config --global credential.helper '!f() { echo "username=git"; echo "password=$GITHUB_TOKEN"; }; f'
               echo "Cloning repos from devworkspace-repo ConfigMaps..."
               SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
               CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt

@@ -1,0 +1,35 @@
+{% raw %}
+name: PR Build
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:pr-${{ github.event.number }}
+{% endraw %}
