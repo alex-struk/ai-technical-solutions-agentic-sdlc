@@ -4,6 +4,7 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 - **DevWorkspace** — browser-based VS Code IDE (che-code)
 - **Red Hat Developer Hub** — Backstage-based internal developer portal (RHDH v1.9.0)
 - **KServe Model Serving** — LLM inference via llama.cpp on OpenShift AI (`b875cc-dev`)
+- **SRE Agent** — agentic SRE system using AutoGen + MCP servers + Tekton for automated incident response
 
 ## Prerequisites
 
@@ -28,16 +29,42 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 │       ├── kustomization.yaml
 │       ├── pvc.yaml                # PVC for GGUF model storage
 │       ├── serving-runtime.yaml    # llama.cpp ServingRuntime
-│       └── inference-service.yaml  # InferenceService for qwen2.5-3b
+│       ├── inference-service.yaml  # InferenceService for qwen2.5-3b
+│       └── fallback/               # Plain Deployment fallback (no KServe CRDs)
+│           ├── kustomization.yaml
+│           └── deployment.yaml     # Deployment + Service + Route
+│   └── sre-agent/                  # Agentic SRE system
+│       ├── kustomization.yaml
+│       ├── deployment.yaml         # SRE agent (AutoGen + GitHub MCP)
+│       ├── k8s-mcp-server.yaml     # Kubernetes MCP server (SSE)
+│       ├── rbac.yaml               # ServiceAccount + read-only Role
+│       ├── configmap.yaml          # Agent configuration
+│       ├── network-policy.yaml     # Agent → MCP server traffic
+│       └── tekton-pipeline.yaml    # Remediation pipeline with ApprovalTask
 ├── overlays/
 │   └── prod/
 │       ├── kustomization.yaml      # DevWorkspace overlay (namespace, token, service name)
 │       ├── .env                    # CONNECTION_TOKEN and SERVICE_NAME (gitignored)
-│       └── rhdh/
-│           ├── kustomization.yaml  # RHDH overlay (namespace, secrets, patches)
-│           └── .env                # GITHUB_CLIENT_ID, SECRET, PAT (gitignored)
-│       └── kserve/
-│           └── kustomization.yaml  # KServe overlay (namespace: b875cc-dev)
+│       ├── rhdh/
+│       │   ├── kustomization.yaml  # RHDH overlay (namespace, secrets, patches)
+│       │   └── .env                # GITHUB_CLIENT_ID, SECRET, PAT (gitignored)
+│       ├── kserve/
+│       │   └── kustomization.yaml  # KServe overlay (namespace: b875cc-dev)
+│       └── sre-agent/
+│           ├── kustomization.yaml  # SRE agent overlay (namespace: fd34fb-prod)
+│           └── .env                # GITHUB_TOKEN, LLM_API_KEY (gitignored)
+├── sre-agent/                      # SRE agent source code
+│   ├── agent.py                    # Main AutoGen agent loop
+│   ├── mcp_setup.py                # MCP server connections (k8s SSE + GitHub STDIO)
+│   ├── llm_config.py               # LLM client (OpenAI-compatible → qwen2.5-3b)
+│   ├── tekton_client.py            # Tekton PipelineRun creation
+│   ├── prompts.py                  # System prompts and issue/PR templates
+│   ├── requirements.txt            # Python dependencies
+│   ├── Dockerfile                  # UBI9 Python 3.11 + github-mcp-server binary
+│   └── test-scenarios/             # Scripts to simulate incidents
+│       ├── simulate-crashloop.sh   # Inject CrashLoopBackOff
+│       ├── simulate-oom.sh         # Inject OOMKilled
+│       └── restore.sh              # Rollback to working state
 ├── templates/                      # RHDH software templates
 │   └── hello-world/
 │       ├── template.yaml           # Template definition (scaffolder)
@@ -49,8 +76,10 @@ Developer tooling on OpenShift, managed with Kustomize. Includes:
 ├── deploy.sh                       # DevWorkspace deploy script
 ├── deploy-rhdh.sh                  # RHDH deploy script
 ├── deploy-kserve.sh                # KServe model serving deploy script
+├── deploy-sre-agent.sh             # SRE agent deploy script
 ├── undeploy.sh                     # DevWorkspace cleanup script
 ├── undeploy-kserve.sh              # KServe cleanup script
+├── undeploy-sre-agent.sh           # SRE agent cleanup script
 ├── .gitignore
 └── CLAUDE.md
 ```
@@ -335,6 +364,155 @@ Once KServe is unblocked (namespace labels fixed), remove the fallback with `./u
 - **PVC storage, not S3** — models are stored on a `netapp-file-standard` RWX PVC (`llm-models-pvc`). The helper pod downloads from HuggingFace on first deploy; subsequent deploys skip the download if the file already exists.
 - **Each model gets its own pod** — unlike the existing `llm-server` which runs 5 models in one pod, each `InferenceService` gets dedicated resources. This prevents OOM issues.
 - **The existing `llm-server` is unaffected** — it's a plain Kubernetes Deployment (not a KServe resource), so changing namespace labels and deploying InferenceServices has no impact on it.
+
+## SRE Agent (Agentic Incident Response)
+
+An automated Site Reliability Engineering agent that monitors deployments, detects issues, analyzes root causes using the local LLM, and creates GitHub issues/PRs with proposed fixes. Uses Tekton ApprovalTasks for human-in-the-loop remediation.
+
+### Architecture
+
+```
+fd34fb-prod namespace
+┌──────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│  ┌─────────────────────┐     SSE      ┌──────────────────────┐  │
+│  │   sre-agent          │────────────>│ kubernetes-mcp-server │  │
+│  │   (AutoGen Python)   │             │ (pod/log/event tools) │  │
+│  │                      │  STDIO      └──────────────────────┘  │
+│  │   includes:          │──────┐                                 │
+│  │   github-mcp-server  │      │       ┌──────────────────────┐  │
+│  │   (binary, in-proc)  │<─────┘       │ Tekton Pipeline      │  │
+│  │                      │──creates────>│ ApprovalTask →       │  │
+│  │                      │  PipelineRun │ RemediationTask      │  │
+│  └──────────┬───────────┘              └──────────────────────┘  │
+│             │                                                    │
+│             │ monitors    ┌──────────────────────┐               │
+│             └────────────>│ test (hello-world)   │               │
+│                           └──────────────────────┘               │
+└──────────────────────────────────────────────────────────────────┘
+              │ HTTPS (via routes)
+              └──────────> LLM (qwen25-3b-llama in b875cc-dev)
+```
+
+**Components:**
+- **sre-agent** — AutoGen-based Python agent with monitoring loop (configurable interval, default 60s)
+- **kubernetes-mcp-server** — [MCP server](https://github.com/manusa/kubernetes-mcp-server) exposing Kubernetes tools (pod status, logs, events) via SSE
+- **github-mcp-server** — [GitHub MCP server](https://github.com/github/github-mcp-server) for issue/PR creation, runs as STDIO subprocess inside the agent container
+- **sre-remediation** — Tekton Pipeline with ApprovalTask gate, then remediation Task (restart/rollback/scale)
+
+**Data flow:**
+1. Agent polls pod status, events, and logs via kubernetes-mcp-server
+2. When an issue is detected (CrashLoopBackOff, OOMKilled, etc.), diagnostic context is sent to qwen2.5-3b for analysis
+3. LLM returns structured JSON with root cause, severity, and suggested fix
+4. Agent creates a GitHub issue with the full incident report
+5. For actionable fixes, a Tekton PipelineRun is created with an ApprovalTask
+6. After human approval (in OpenShift Pipelines console), the remediation executes
+
+### Deploy
+
+#### 1. Configure credentials
+
+```bash
+# Get the LLM API key from the existing secret
+LLM_KEY=$(oc get secret llama-api-key -n b875cc-dev -o jsonpath='{.data.LLAMA_API_KEY}' | base64 -d)
+
+# Reuse the GitHub PAT from the workspace overlay (needs repo scope)
+GITHUB_KEY=$(grep GITHUB_TOKEN overlays/prod/.env | cut -d= -f2)
+
+cat > overlays/prod/sre-agent/.env <<EOF
+GITHUB_TOKEN=${GITHUB_KEY}
+LLM_API_KEY=${LLM_KEY}
+EOF
+```
+
+#### 2. Build and push the agent image
+
+```bash
+podman build -t ghcr.io/strukalex/sre-agent:v0.1 sre-agent/
+podman push ghcr.io/strukalex/sre-agent:v0.1
+```
+
+After pushing, update `base/sre-agent/deployment.yaml` with the image digest for ACS compliance.
+
+#### 3. Deploy
+
+```bash
+./deploy-sre-agent.sh
+```
+
+This deploys the agent, kubernetes-mcp-server, RBAC, NetworkPolicy, and Tekton pipeline. The script validates that `.env` exists and has the required keys.
+
+#### 4. Verify
+
+```bash
+# Check agent logs
+oc logs -f deployment/sre-agent -n fd34fb-prod
+
+# Check MCP server logs
+oc logs -f deployment/k8s-mcp-server -n fd34fb-prod
+
+# View pending remediation approvals
+oc get pipelineruns -n fd34fb-prod -l app=sre-agent
+```
+
+#### 5. Undeploy
+
+```bash
+./undeploy-sre-agent.sh
+```
+
+### Configuration
+
+All configuration is in `base/sre-agent/configmap.yaml`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHECK_INTERVAL` | `60` | Seconds between monitoring checks |
+| `TARGET_NAMESPACE` | `fd34fb-prod` | Namespace to monitor |
+| `TARGET_DEPLOYMENT` | `test` | Deployment name to monitor |
+| `HEALTH_ENDPOINT` | `https://test-fd34fb-prod.apps.silver.devops.gov.bc.ca/health` | App health endpoint |
+| `LLM_ENDPOINT` | `https://qwen25-3b-llama-b875cc-dev.apps.silver.devops.gov.bc.ca/v1/chat/completions` | LLM API endpoint |
+| `LLM_MODEL` | `qwen2.5-3b-instruct-q4_k_m` | Model identifier |
+| `GITHUB_REPO` | `strukalex/rhdh-test` | Target repo for issues/PRs |
+| `K8S_MCP_URL` | `http://k8s-mcp-server:8080/sse` | Kubernetes MCP server SSE endpoint |
+| `INCIDENT_COOLDOWN_MINUTES` | `30` | Minutes before re-alerting on same issue type |
+
+### Testing with Simulated Incidents
+
+Scripts in `sre-agent/test-scenarios/` inject failures into the target deployment:
+
+```bash
+# Simulate CrashLoopBackOff (bad container command)
+./sre-agent/test-scenarios/simulate-crashloop.sh
+
+# Simulate OOMKilled (32Mi memory limit)
+./sre-agent/test-scenarios/simulate-oom.sh
+
+# Restore to previous working state
+./sre-agent/test-scenarios/restore.sh
+```
+
+After injecting a failure, watch the agent logs to see it detect the issue, query the LLM, create a GitHub issue, and trigger a Tekton PipelineRun for approval.
+
+### Approving Remediations
+
+When the agent detects an actionable issue, it creates a Tekton PipelineRun with an ApprovalTask. To approve:
+
+1. Go to the OpenShift Console → Pipelines → PipelineRuns (namespace `fd34fb-prod`)
+2. Find the run labeled `app=sre-agent`
+3. Review the incident description and approve or reject
+4. On approval, the remediation task executes (restart, rollback, or scale)
+
+### SRE Agent Gotchas
+
+- **kagent requires cluster-admin for CRDs** — since we don't have cluster-admin on BC Gov Silver, we use AutoGen (the framework kagent wraps) directly as a Python library. Same MCP tool connectivity, no CRDs needed.
+- **LLM quality is limited (3B model)** — the agent uses structured prompts with JSON schema and few-shot examples to compensate. If JSON parsing fails, it falls back to raw text in the GitHub issue. Upgrading to a larger model (e.g., 8B+) will significantly improve analysis quality.
+- **No Prometheus MCP** — querying OpenShift's built-in Prometheus requires `cluster-monitoring-view` ClusterRole, which we don't have. The agent monitors via the Kubernetes API (pod status, events, logs) instead. Ask the platform team for `cluster-monitoring-view` to enable metric-based monitoring in a future iteration.
+- **No webhook-driven alerts** — Alertmanager config is cluster-scoped. The agent polls on a configurable interval instead.
+- **The agent calls the LLM via the external route** — it goes through HTTPS ingress rather than cross-namespace service networking. This avoids needing NetworkPolicy in `b875cc-dev` but adds ~10ms latency per request.
+- **GitHub MCP server runs as a subprocess** — the binary is bundled in the agent container image and launched via STDIO transport. This avoids deploying it as a separate container.
+- **Incident cooldown prevents duplicate issues** — the agent tracks incidents in-memory with a 30-minute cooldown per incident type. If the agent pod restarts, cooldown state is lost and it may re-file an issue.
+- **Tekton ApprovalTask approvers are hardcoded** — edit `base/sre-agent/tekton-pipeline.yaml` to change the list of approvers.
 
 ## Adding new environments
 

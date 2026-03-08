@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - k8s-mcp-server.yaml
+  - network-policy.yaml
+  - tekton-pipeline.yaml

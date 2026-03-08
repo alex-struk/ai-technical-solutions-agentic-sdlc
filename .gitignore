@@ -1,4 +1,4 @@
 .env
-overlays/*/.env
+overlays/**/.env
 .test-output/
 /PrivateNotes.md

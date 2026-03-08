@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-k8s-mcp
+  labels:
+    app: sre-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: k8s-mcp-server
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sre-agent
+      ports:
+        - protocol: TCP
+          port: 8080

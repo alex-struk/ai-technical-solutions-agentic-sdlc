@@ -1,0 +1,103 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: sre-remediation
+  labels:
+    app: sre-agent
+spec:
+  params:
+    - name: incident-id
+      type: string
+      description: Unique identifier for the incident
+    - name: action-type
+      type: string
+      description: "Type of remediation: restart, scale, rollback, config"
+    - name: target-resource
+      type: string
+      description: "Kubernetes resource to act on (e.g., deployment/test)"
+    - name: description
+      type: string
+      description: Description of the incident and proposed fix
+  tasks:
+    # Step 1: Human approval gate
+    - name: approve-remediation
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - alex-struk
+        - name: numberOfApprovalsRequired
+          value: "1"
+        - name: description
+          value: |
+            SRE Agent Remediation Request
+
+            Incident: $(params.incident-id)
+            Action: $(params.action-type)
+            Resource: $(params.target-resource)
+
+            $(params.description)
+
+            Please review and approve/reject this remediation.
+    # Step 2: Execute remediation (after approval)
+    - name: execute-remediation
+      runAfter:
+        - approve-remediation
+      taskSpec:
+        params:
+          - name: action-type
+            type: string
+          - name: target-resource
+            type: string
+          - name: namespace
+            type: string
+        steps:
+          - name: run-remediation
+            image: registry.redhat.io/openshift4/ose-cli:v4.14
+            script: |
+              #!/bin/bash
+              set -euo pipefail
+
+              ACTION="$(params.action-type)"
+              TARGET="$(params.target-resource)"
+              NS="$(params.namespace)"
+
+              echo "=== SRE Agent Remediation ==="
+              echo "Action:   ${ACTION}"
+              echo "Target:   ${TARGET}"
+              echo "Namespace: ${NS}"
+              echo ""
+
+              case "${ACTION}" in
+                restart)
+                  echo "Restarting ${TARGET}..."
+                  oc rollout restart "${TARGET}" -n "${NS}"
+                  oc rollout status "${TARGET}" -n "${NS}" --timeout=120s
+                  echo "Restart completed successfully."
+                  ;;
+                rollback)
+                  echo "Rolling back ${TARGET}..."
+                  oc rollout undo "${TARGET}" -n "${NS}"
+                  oc rollout status "${TARGET}" -n "${NS}" --timeout=120s
+                  echo "Rollback completed successfully."
+                  ;;
+                scale)
+                  echo "Scaling ${TARGET} to 2 replicas..."
+                  oc scale "${TARGET}" --replicas=2 -n "${NS}"
+                  echo "Scale completed successfully."
+                  ;;
+                *)
+                  echo "Unknown action type: ${ACTION}"
+                  echo "Manual intervention required."
+                  exit 1
+                  ;;
+              esac
+      params:
+        - name: action-type
+          value: $(params.action-type)
+        - name: target-resource
+          value: $(params.target-resource)
+        - name: namespace
+          value: "fd34fb-prod"
