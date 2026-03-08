@@ -307,6 +307,26 @@ curl https://<inference-endpoint>/v1/chat/completions \
   }'
 ```
 
+### Fallback: Plain Deployment (no KServe)
+
+KServe requires namespace labels (`modelmesh-enabled=false`) that need platform admin access. While waiting for that, the fallback deployment runs llama.cpp as a plain Kubernetes Deployment with API key auth.
+
+```bash
+# Deploy (creates API key secret, Deployment, Service, Route)
+./deploy-kserve-fallback.sh
+
+# Remove (does NOT delete the shared llm-models-pvc)
+./undeploy-kserve-fallback.sh
+```
+
+The deploy script prints the API key on first run — save it for client config. The endpoint uses the same `llm-models-pvc` as the KServe setup.
+
+**Endpoint**: `https://qwen25-3b-llama-b875cc-dev.apps.silver.devops.gov.bc.ca/v1/chat/completions`
+
+All requests require `Authorization: Bearer <api-key>`. Requests without a valid key get `{"detail":"Invalid API key"}`.
+
+Once KServe is unblocked (namespace labels fixed), remove the fallback with `./undeploy-kserve-fallback.sh` and re-run `./deploy-kserve.sh`.
+
 ### KServe Gotchas
 
 - **No Knative Serving on this cluster** — must use `RawDeployment` mode (annotation `serving.kserve.io/deploymentMode: RawDeployment`). Serverless auto-scale-to-zero is not available.

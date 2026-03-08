@@ -1,3 +1,4 @@
 .env
 overlays/*/.env
 .test-output/
+/PrivateNotes.md
