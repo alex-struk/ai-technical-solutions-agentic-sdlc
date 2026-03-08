@@ -1,7 +1,7 @@
 FROM registry.access.redhat.com/ubi9/nodejs-20:1-1734584268 AS builder
 
-COPY package.json ./
-RUN npm ci --only=production
+COPY package*.json ./
+RUN npm install --omit=dev
 
 FROM registry.access.redhat.com/ubi9/nodejs-20-minimal:1-63
 
