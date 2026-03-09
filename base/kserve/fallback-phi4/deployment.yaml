@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phi4-mini-llama
+  labels:
+    app: phi4-mini-llama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phi4-mini-llama
+  template:
+    metadata:
+      labels:
+        app: phi4-mini-llama
+    spec:
+      containers:
+        - name: llama-server
+          image: quay.io/alexonoliveira/llamacpp_python@sha256:4c0043b34e2ac3bf5ecd583e571cbc9661c7abebca3c13c365b78441907def91
+          command:
+            - python3
+            - -m
+            - llama_cpp.server
+            - --model
+            - /mnt/models/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - --n_ctx
+            - "4096"
+            - --api_key
+            - $(LLAMA_API_KEY)
+          env:
+            - name: LLAMA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llama-api-key
+                  key: LLAMA_API_KEY
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: 6Gi
+              cpu: "1"
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: models
+              mountPath: /mnt/models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phi4-mini-llama
+  labels:
+    app: phi4-mini-llama
+spec:
+  selector:
+    app: phi4-mini-llama
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: phi4-mini-llama
+  labels:
+    app: phi4-mini-llama
+spec:
+  to:
+    kind: Service
+    name: phi4-mini-llama
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

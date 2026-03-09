@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(oc rollout status deployment/phi4-mini-llama -n b875cc-dev --timeout=300s)",
+      "Bash(oc logs deployment/sre-agent -n fd34fb-prod --tail=60)",
+      "Bash(oc get events -n fd34fb-prod --sort-by='.lastTimestamp' --field-selector reason=Failed)",
+      "Bash(oc logs deployment/sre-agent -n fd34fb-prod --tail=30)"
+    ]
+  }
+}

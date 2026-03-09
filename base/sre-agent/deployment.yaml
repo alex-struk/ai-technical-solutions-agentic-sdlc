@@ -17,7 +17,7 @@ spec:
       serviceAccountName: sre-agent
       containers:
         - name: sre-agent
-          image: ghcr.io/strukalex/sre-agent:v0.1
+          image: image-registry.openshift-image-registry.svc:5000/fd34fb-prod/sre-agent:v0.9
           envFrom:
             - configMapRef:
                 name: sre-agent-config

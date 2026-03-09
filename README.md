@@ -391,7 +391,7 @@ fd34fb-prod namespace
 │                           └──────────────────────┘               │
 └──────────────────────────────────────────────────────────────────┘
               │ HTTPS (via routes)
-              └──────────> LLM (qwen25-3b-llama in b875cc-dev)
+              └──────────> LLM (phi4-mini-llama in b875cc-dev)
 ```
 
 **Components:**
@@ -402,7 +402,7 @@ fd34fb-prod namespace
 
 **Data flow:**
 1. Agent polls pod status, events, and logs via kubernetes-mcp-server
-2. When an issue is detected (CrashLoopBackOff, OOMKilled, etc.), diagnostic context is sent to qwen2.5-3b for analysis
+2. When an issue is detected (CrashLoopBackOff, OOMKilled, etc.), diagnostic context is sent to Phi-4 Mini for analysis
 3. LLM returns structured JSON with root cause, severity, and suggested fix
 4. Agent creates a GitHub issue with the full incident report
 5. For actionable fixes, a Tekton PipelineRun is created with an ApprovalTask
@@ -471,8 +471,8 @@ All configuration is in `base/sre-agent/configmap.yaml`:
 | `TARGET_NAMESPACE` | `fd34fb-prod` | Namespace to monitor |
 | `TARGET_DEPLOYMENT` | `test` | Deployment name to monitor |
 | `HEALTH_ENDPOINT` | `https://test-fd34fb-prod.apps.silver.devops.gov.bc.ca/health` | App health endpoint |
-| `LLM_ENDPOINT` | `https://qwen25-3b-llama-b875cc-dev.apps.silver.devops.gov.bc.ca/v1/chat/completions` | LLM API endpoint |
-| `LLM_MODEL` | `qwen2.5-3b-instruct-q4_k_m` | Model identifier |
+| `LLM_ENDPOINT` | `https://phi4-mini-llama-b875cc-dev.apps.silver.devops.gov.bc.ca/v1/chat/completions` | LLM API endpoint |
+| `LLM_MODEL` | `microsoft_Phi-4-mini-instruct-Q4_K_M` | Model identifier |
 | `GITHUB_REPO` | `strukalex/rhdh-test` | Target repo for issues/PRs |
 | `K8S_MCP_URL` | `http://k8s-mcp-server:8080/sse` | Kubernetes MCP server SSE endpoint |
 | `INCIDENT_COOLDOWN_MINUTES` | `30` | Minutes before re-alerting on same issue type |
@@ -506,7 +506,7 @@ When the agent detects an actionable issue, it creates a Tekton PipelineRun with
 ### SRE Agent Gotchas
 
 - **kagent requires cluster-admin for CRDs** — since we don't have cluster-admin on BC Gov Silver, we use AutoGen (the framework kagent wraps) directly as a Python library. Same MCP tool connectivity, no CRDs needed.
-- **LLM quality is limited (3B model)** — the agent uses structured prompts with JSON schema and few-shot examples to compensate. If JSON parsing fails, it falls back to raw text in the GitHub issue. Upgrading to a larger model (e.g., 8B+) will significantly improve analysis quality.
+- **LLM quality is limited (3.8B model)** — Phi-4 Mini is capable for its size but the agent still uses structured prompts with JSON schema and few-shot examples to ensure consistent output. If JSON parsing fails, it falls back to raw text in the GitHub issue. Upgrading to a larger model (e.g., 8B+) will further improve analysis quality.
 - **No Prometheus MCP** — querying OpenShift's built-in Prometheus requires `cluster-monitoring-view` ClusterRole, which we don't have. The agent monitors via the Kubernetes API (pod status, events, logs) instead. Ask the platform team for `cluster-monitoring-view` to enable metric-based monitoring in a future iteration.
 - **No webhook-driven alerts** — Alertmanager config is cluster-scoped. The agent polls on a configurable interval instead.
 - **The agent calls the LLM via the external route** — it goes through HTTPS ingress rather than cross-namespace service networking. This avoids needing NetworkPolicy in `b875cc-dev` but adds ~10ms latency per request.

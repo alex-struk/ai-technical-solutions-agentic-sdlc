@@ -17,14 +17,13 @@ spec:
       serviceAccountName: sre-agent
       containers:
         - name: k8s-mcp-server
-          image: ghcr.io/manusa/kubernetes-mcp-server:0.0.31
+          image: image-registry.openshift-image-registry.svc:5000/fd34fb-prod/kubernetes-mcp-server:v1
           args:
-            - --transport
-            - sse
-            - --sse-address
-            - "0.0.0.0"
-            - --sse-port
+            - --port
             - "8080"
+            - --read-only
+            - --stateless
+            - --disable-multi-cluster
           ports:
             - containerPort: 8080
           resources:

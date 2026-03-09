@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/python-311:9.5-1741662412
+FROM registry.access.redhat.com/ubi9/python-311:1-66.1720018730
 
 # Install git (needed for GitHub MCP server operations) and github-mcp-server binary
 USER 0

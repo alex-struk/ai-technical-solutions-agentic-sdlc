@@ -19,7 +19,7 @@ from autogen_agentchat.messages import TextMessage
 from autogen_core import CancellationToken
 
 from llm_config import create_llm_client
-from mcp_setup import get_github_tools, get_k8s_tools
+from mcp_setup import get_github_tools, get_k8s_workbench
 from prompts import SYSTEM_PROMPT, GITHUB_ISSUE_TEMPLATE
 from tekton_client import create_remediation_run, generate_incident_id
 
@@ -69,26 +69,52 @@ def record_incident(incident_key: str):
     active_incidents[incident_key] = time.time()
 
 
-async def gather_diagnostics(k8s_agent: AssistantAgent) -> dict:
-    """Use the k8s MCP tools via the agent to gather diagnostic info."""
+async def gather_diagnostics(k8s_workbench) -> dict:
+    """Call MCP tools directly to gather diagnostic info (no LLM needed)."""
     namespace = os.environ.get("TARGET_NAMESPACE", "fd34fb-prod")
     deployment = os.environ.get("TARGET_DEPLOYMENT", "test")
-
-    prompt = f"""Check the health of deployment '{deployment}' in namespace '{namespace}'.
-Run these checks:
-1. List pods with label selector app={deployment} in namespace {namespace}
-2. Get events in namespace {namespace} related to the deployment
-3. If any pod is not in Running state or has restarts > 0, get its logs
-
-Return all findings as a structured summary."""
+    results = []
 
     try:
-        response = await k8s_agent.on_messages(
-            [TextMessage(content=prompt, source="user")],
-            cancellation_token=CancellationToken(),
+        # 1. List pods in namespace
+        pod_data = await k8s_workbench.call_tool(
+            "pods_list_in_namespace", {"namespace": namespace}
         )
+        pod_text = _extract_text(pod_data)
+        results.append(f"=== Pods in {namespace} ===\n{pod_text}")
+
+        # 2. Get events
+        event_data = await k8s_workbench.call_tool(
+            "events_list", {"namespace": namespace}
+        )
+        event_text = _extract_text(event_data)
+        results.append(f"=== Events in {namespace} ===\n{event_text}")
+
+        # 3. Get pod logs for the target deployment pods
+        # Find pods matching the deployment
+        pod_lines = pod_text.split("\n")
+        for line in pod_lines:
+            if deployment in line.lower():
+                # Extract pod name (first column in table output)
+                parts = line.split()
+                if parts:
+                    pod_name = parts[0]
+                    try:
+                        log_data = await k8s_workbench.call_tool(
+                            "pods_log", {
+                                "name": pod_name,
+                                "namespace": namespace,
+                                "tail": 50,
+                            }
+                        )
+                        log_text = _extract_text(log_data)
+                        results.append(f"=== Logs: {pod_name} ===\n{log_text}")
+                    except Exception:
+                        logger.debug("Could not get logs for pod %s", pod_name)
+
+        raw_response = "\n\n".join(results)
         return {
-            "raw_response": response.chat_message.content,
+            "raw_response": raw_response,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "deployment": deployment,
             "namespace": namespace,
@@ -103,11 +129,56 @@ Return all findings as a structured summary."""
         }
 
 
+def _extract_text(tool_result) -> str:
+    """Extract text from MCP tool result (handles various return formats)."""
+    if isinstance(tool_result, str):
+        return tool_result
+    if isinstance(tool_result, dict):
+        # MCP tool results often have 'content' with list of text blocks
+        content = tool_result.get("content", [])
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict):
+                    texts.append(item.get("text", str(item)))
+                else:
+                    texts.append(str(item))
+            return "\n".join(texts)
+        return str(content)
+    if isinstance(tool_result, list):
+        return "\n".join(str(item) for item in tool_result)
+    if hasattr(tool_result, "content"):
+        # MCP CallToolResult object
+        content = tool_result.content
+        if isinstance(content, list):
+            return "\n".join(
+                item.text if hasattr(item, "text") else str(item)
+                for item in content
+            )
+        return str(content)
+    return str(tool_result)
+
+
 async def analyze_with_llm(llm_client, diagnostics: dict) -> dict:
     """Send diagnostics to the LLM for root cause analysis."""
     from autogen_core.models import UserMessage, SystemMessage
 
-    diagnostic_text = diagnostics.get("raw_response", json.dumps(diagnostics, indent=2))
+    raw = diagnostics.get("raw_response", json.dumps(diagnostics, indent=2))
+    deployment = diagnostics.get("deployment", "test")
+
+    # Filter to only include lines relevant to the target deployment
+    # This prevents truncation from cutting off the important data
+    relevant_lines = []
+    for line in raw.split("\n"):
+        lower = line.lower()
+        if deployment.lower() in lower or line.startswith("==="):
+            relevant_lines.append(line)
+    filtered = "\n".join(relevant_lines) if relevant_lines else raw
+
+    # Truncate to fit within llama.cpp context window (4096 tokens)
+    diagnostic_text = filtered[:2000]
+    if len(filtered) > 2000:
+        diagnostic_text += "\n[truncated]"
 
     try:
         result = await llm_client.create(
@@ -123,10 +194,37 @@ async def analyze_with_llm(llm_client, diagnostics: dict) -> dict:
 
         # Try to parse as JSON
         try:
+            # Strip markdown code blocks if present
+            clean = response_text.strip()
+            if clean.startswith("```"):
+                # Remove ```json and trailing ```
+                lines = clean.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                clean = "\n".join(lines)
             # Find JSON in response (model might add text around it)
-            start = response_text.index("{")
-            end = response_text.rindex("}") + 1
-            analysis = json.loads(response_text[start:end])
+            start = clean.index("{")
+            # Find matching closing brace by trying progressively
+            analysis = None
+            for i in range(start + 1, len(clean)):
+                if clean[i] == "}":
+                    try:
+                        analysis = json.loads(clean[start:i + 1])
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            if analysis is None:
+                raise ValueError("No valid JSON found")
+            # Ensure no None values in required fields
+            analysis.setdefault("root_cause", "Unknown")
+            analysis.setdefault("severity", "warning")
+            analysis.setdefault("suggested_fix", "Manual investigation required")
+            analysis.setdefault("fix_type", "none")
+            # Replace explicit None values
+            for key in ("root_cause", "severity", "suggested_fix", "fix_type"):
+                if analysis[key] is None:
+                    analysis[key] = {"root_cause": "Unknown", "severity": "warning",
+                                     "suggested_fix": "Manual investigation required",
+                                     "fix_type": "none"}[key]
         except (ValueError, json.JSONDecodeError):
             logger.warning("LLM response was not valid JSON, using raw text")
             analysis = {
@@ -150,29 +248,47 @@ async def analyze_with_llm(llm_client, diagnostics: dict) -> dict:
 
 
 def detect_issue_type(diagnostics: dict) -> str | None:
-    """Simple heuristic to detect issue type from diagnostics."""
+    """Detect issue type from pod status, scoped to the target deployment only.
+
+    Only examines the pod list section (not events) to avoid false positives
+    from stale events. Checks if any target deployment pod has a non-Running status.
+    """
     raw = diagnostics.get("raw_response", "").lower()
-    if "crashloopbackoff" in raw or "crash" in raw:
-        return "crashloop"
-    if "oomkilled" in raw or "oom" in raw:
-        return "oomkilled"
-    if "error" in raw and ("500" in raw or "connection refused" in raw):
-        return "app_error"
-    if "imagepullbackoff" in raw or "errimagepull" in raw:
-        return "image_pull"
-    if "not found" in raw or "missing" in raw:
-        return "missing_resource"
+    deployment = diagnostics.get("deployment", "test").lower()
+
+    # Extract pod list section only (before events section)
+    pod_section = raw.split("=== events")[0] if "=== events" in raw else raw
+
+    # Find pod lines for the target deployment
+    target_pod_lines = [
+        line for line in pod_section.split("\n")
+        if deployment in line and "pod" in line
+    ]
+
+    if not target_pod_lines:
+        return None  # No target pods found at all
+
+    for line in target_pod_lines:
+        if "crashloopbackoff" in line:
+            return "crashloop"
+        if "oomkilled" in line:
+            return "oomkilled"
+        if "imagepullbackoff" in line or "errimagepull" in line:
+            return "image_pull"
+        if "error" in line and "running" not in line:
+            return "pod_error"
+        # Check for non-running pods (but not completed jobs)
+        if "running" not in line and "completed" not in line and "succeeded" not in line:
+            if any(s in line for s in ["pending", "terminated", "waiting", "init"]):
+                return "pod_unhealthy"
+
     return None
 
 
-async def create_github_issue(
-    github_agent: AssistantAgent,
-    analysis: dict,
-    diagnostics: dict,
-) -> str | None:
-    """Create a GitHub issue with the incident analysis."""
+def _build_issue_body(analysis: dict, diagnostics: dict) -> tuple[str, str]:
+    """Build GitHub issue title and body."""
     repo = os.environ.get("GITHUB_REPO", "strukalex/rhdh-test")
-    model = os.environ.get("LLM_MODEL", "qwen2.5-3b")
+    model = os.environ.get("LLM_MODEL", "phi-4-mini")
 
     title = f"[SRE Agent] {analysis.get('severity', 'warning').upper()}: {analysis.get('root_cause', 'Unknown issue')[:80]}"
 
@@ -188,6 +304,17 @@ async def create_github_issue(
         logs="See pod status above",
         model=model,
     )
+    return title, body
+
+
+async def create_github_issue_via_agent(
+    github_agent: AssistantAgent,
+    analysis: dict,
+    diagnostics: dict,
+) -> str | None:
+    """Create a GitHub issue using the AssistantAgent with MCP tools."""
+    repo = os.environ.get("GITHUB_REPO", "strukalex/rhdh-test")
+    title, body = _build_issue_body(analysis, diagnostics)
 
     prompt = f"""Create a GitHub issue in repository {repo} with:
 Title: {title}
@@ -203,7 +330,35 @@ Body:
         logger.info("GitHub issue creation response: %s", response.chat_message.content[:200])
         return response.chat_message.content
     except Exception:
-        logger.exception("Failed to create GitHub issue")
+        logger.exception("Failed to create GitHub issue via agent")
+        return None
+
+
+async def create_github_issue_via_workbench(
+    workbench,
+    analysis: dict,
+    diagnostics: dict,
+) -> str | None:
+    """Create a GitHub issue using McpWorkbench direct tool call."""
+    repo = os.environ.get("GITHUB_REPO", "strukalex/rhdh-test")
+    owner, repo_name = repo.split("/", 1)
+    title, body = _build_issue_body(analysis, diagnostics)
+
+    try:
+        result = await workbench.call_tool(
+            "create_issue",
+            {
+                "owner": owner,
+                "repo": repo_name,
+                "title": title,
+                "body": body,
+                "labels": ["sre-agent", "incident"],
+            },
+        )
+        logger.info("GitHub issue created via workbench: %s", str(result)[:200])
+        return str(result)
+    except Exception:
+        logger.exception("Failed to create GitHub issue via workbench")
         return None
 
 
@@ -211,6 +366,7 @@ async def handle_incident(
     analysis: dict,
     diagnostics: dict,
     github_agent: AssistantAgent | None,
+    github_workbench,
     issue_type: str,
 ):
     """Handle a detected incident: create issue, trigger remediation."""
@@ -234,7 +390,9 @@ async def handle_incident(
 
     # Create GitHub issue
     if github_agent:
-        await create_github_issue(github_agent, analysis, diagnostics)
+        await create_github_issue_via_agent(github_agent, analysis, diagnostics)
+    elif github_workbench:
+        await create_github_issue_via_workbench(github_workbench, analysis, diagnostics)
 
     # Create Tekton PipelineRun for remediation (only for actionable fixes)
     fix_type = analysis.get("fix_type", "none")
@@ -252,8 +410,9 @@ async def handle_incident(
 
 
 async def monitoring_loop(
-    k8s_agent: AssistantAgent,
+    k8s_workbench,
     github_agent: AssistantAgent | None,
+    github_workbench,
     llm_client,
 ):
     """Main monitoring loop."""
@@ -269,9 +428,9 @@ async def monitoring_loop(
         try:
             touch_healthy()
 
-            # Step 1: Gather diagnostics
+            # Step 1: Gather diagnostics (direct MCP calls, no LLM)
             logger.info("--- Check cycle start ---")
-            diagnostics = await gather_diagnostics(k8s_agent)
+            diagnostics = await gather_diagnostics(k8s_workbench)
 
             if "error" in diagnostics:
                 logger.error("Diagnostics gathering failed: %s", diagnostics["error"])
@@ -294,12 +453,12 @@ async def monitoring_loop(
                 "LLM analysis: severity=%s, fix_type=%s, root_cause=%s",
                 analysis.get("severity"),
                 analysis.get("fix_type"),
-                analysis.get("root_cause", "")[:100],
+                (analysis.get("root_cause") or "")[:100],
             )
 
             # Step 4: Handle incident
             if analysis.get("severity") in ("critical", "warning"):
-                await handle_incident(analysis, diagnostics, github_agent, issue_type)
+                await handle_incident(analysis, diagnostics, github_agent, github_workbench, issue_type)
 
         except Exception:
             logger.exception("Error in monitoring loop")
@@ -320,29 +479,19 @@ async def main():
     logger.info("Initializing LLM client...")
     llm_client = create_llm_client()
 
-    # Initialize MCP tools
+    # Initialize MCP connections
     logger.info("Connecting to MCP servers...")
-    k8s_tools = await get_k8s_tools()
+    k8s_workbench = await get_k8s_workbench()
     github_tools = await get_github_tools()
 
-    if not k8s_tools:
-        logger.error("No Kubernetes MCP tools available - cannot monitor. Exiting.")
+    if not k8s_workbench:
+        logger.error("Kubernetes MCP workbench unavailable - cannot monitor. Exiting.")
         sys.exit(1)
 
-    # Create agents
-    k8s_agent = AssistantAgent(
-        name="k8s_monitor",
-        model_client=llm_client,
-        tools=k8s_tools,
-        system_message=(
-            "You are a Kubernetes monitoring assistant. "
-            "Use the available tools to check pod status, fetch logs, and get events. "
-            "Return structured diagnostic information."
-        ),
-    )
-
+    # GitHub tools setup
     github_agent = None
-    if github_tools:
+    github_workbench = None
+    if isinstance(github_tools, list) and github_tools:
         github_agent = AssistantAgent(
             name="github_assistant",
             model_client=llm_client,
@@ -352,12 +501,15 @@ async def main():
                 "and pull requests. Always include the sre-agent label on issues."
             ),
         )
+    elif hasattr(github_tools, "call_tool"):
+        github_workbench = github_tools
+        logger.info("Using GitHub McpWorkbench for direct tool calls")
     else:
         logger.warning("GitHub MCP tools unavailable - issue/PR creation disabled")
 
     # Start monitoring
     touch_healthy()
-    await monitoring_loop(k8s_agent, github_agent, llm_client)
+    await monitoring_loop(k8s_workbench, github_agent, github_workbench, llm_client)
 
     logger.info("SRE Agent shutdown complete")
 

@@ -19,7 +19,7 @@ def create_llm_client() -> OpenAIChatCompletionClient:
         api_key=os.environ.get("LLM_API_KEY", "no-key"),
         model_info={
             "vision": False,
-            "function_calling": False,
+            "function_calling": True,
             "json_output": True,
             "family": "unknown",
         },

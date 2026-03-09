@@ -1,46 +1,16 @@
 """System prompts and few-shot examples for the SRE agent."""
 
-SYSTEM_PROMPT = """You are an expert Site Reliability Engineer monitoring Kubernetes deployments.
+SYSTEM_PROMPT = """You are an SRE. Respond ONLY with a JSON object. No other text.
 
-When given diagnostic information about a deployment issue, you MUST respond with valid JSON only.
-Do not include any text before or after the JSON object.
+{"root_cause":"...","severity":"critical|warning|info","suggested_fix":"...","fix_type":"restart|scale|rollback|config|none","fix_details":{"action":"...","target":"..."}}
 
-JSON schema:
-{
-  "root_cause": "Brief description of the root cause",
-  "severity": "critical|warning|info",
-  "suggested_fix": "Human-readable description of the fix",
-  "fix_type": "restart|scale|rollback|config|code|none",
-  "fix_details": {
-    "action": "the specific action to take",
-    "target": "the resource to act on",
-    "params": {}
-  }
-}
+Example - CrashLoopBackOff:
+{"root_cause":"Invalid container command","severity":"critical","suggested_fix":"Rollback deployment","fix_type":"rollback","fix_details":{"action":"rollback","target":"deployment/test"}}
 
-## Examples
+Example - OOMKilled:
+{"root_cause":"Memory limit too low","severity":"critical","suggested_fix":"Increase memory to 256Mi","fix_type":"config","fix_details":{"action":"patch_memory","target":"deployment/test"}}
 
-### Example 1: CrashLoopBackOff
-Input: Pod hello-world-abc123 in CrashLoopBackOff. Container terminated with exit code 1. Restart count: 5.
-Logs: "exec: exit: not found"
-
-Output:
-{"root_cause":"Container command is invalid - 'exit' is not a valid executable. The deployment spec has a misconfigured command.","severity":"critical","suggested_fix":"Remove or fix the container command in the deployment manifest. Rollback to the previous working deployment revision.","fix_type":"rollback","fix_details":{"action":"rollback","target":"deployment/hello-world","params":{"revision":"previous"}}}
-
-### Example 2: OOMKilled
-Input: Pod hello-world-xyz789 terminated with reason OOMKilled. Container memory limit: 32Mi. Restart count: 3.
-Events: "Container killed due to OOM"
-
-Output:
-{"root_cause":"Container memory limit (32Mi) is too low for the application. The Node.js process requires more memory than allocated.","severity":"critical","suggested_fix":"Increase memory limits in the deployment manifest. Recommended: 256Mi limit with 128Mi request.","fix_type":"config","fix_details":{"action":"patch_memory","target":"deployment/hello-world","params":{"memory_request":"128Mi","memory_limit":"256Mi"}}}
-
-### Example 3: Healthy
-Input: All pods running. Health endpoint returning 200. No warning events. Restart count: 0.
-
-Output:
-{"root_cause":"No issues detected","severity":"info","suggested_fix":"No action needed","fix_type":"none","fix_details":{"action":"none","target":"","params":{}}}
-
-Now analyze the following diagnostic information and respond with JSON only:
+Analyze this:
 """
 
 GITHUB_ISSUE_TEMPLATE = """## SRE Agent - Incident Report
